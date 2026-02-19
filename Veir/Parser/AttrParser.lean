@@ -205,6 +205,29 @@ partial def parseOptionalTensorType : AttrParserM (Option TypeAttr) := do
   return some (TensorType.mk body)
 
 /--
+  Parse HEIR's modarith type, if present.
+  Its syntax is `!mod_arith.int<modulus>` or `!mod_arith.int<modulus : iN>`.
+-/
+def parseOptionalModArithType : AttrParserM (Option TypeAttr) := do
+  let token ← peekToken
+  let .exclamationIdent := token.kind | return none
+  let input := (← getThe ParserState).input
+  let typeName := { token.slice with start := token.slice.start + 1 }.of input
+  if typeName ≠ "mod_arith.int".toByteArray then
+    return none
+  let _ ← consumeToken
+  parsePunctuation "<"
+  let some modulus ← parseOptionalInteger false false
+    | throw "modarith type modulus expected"
+  let modulusType ←
+    if ← parseOptionalPunctuation ":" then
+      some <$> parseIntegerType "integer type expected after ':' in modarith type"
+    else
+      pure none
+  parsePunctuation ">"
+  return some (ModArithType.mk modulus modulusType)
+
+/--
   Parse a dialect attribute, if present.
   A dialect attribute has the form `#dialect.name<body>`.
 -/
@@ -281,6 +304,8 @@ partial def parseOptionalFunctionType : AttrParserM (Option FunctionType) := do
 partial def parseOptionalType : AttrParserM (Option TypeAttr) := do
   if let some integerType ← parseOptionalIntegerType then
     return some integerType
+  if let some modArithType ← parseOptionalModArithType then
+    return some modArithType
   if let some tensorType ← parseOptionalTensorType then
     return some tensorType
   if let some dialectType ← parseOptionalDialectType then

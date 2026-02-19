@@ -71,6 +71,15 @@ structure UnregisteredAttr where
 deriving Inhabited, Repr, DecidableEq, Hashable
 
 /--
+  The `!mod_arith.int` type from HEIR's modarith dialect.
+  The modulus type annotation is optional in syntax.
+-/
+structure ModArithType where
+  modulus : Int
+  modulusType : Option IntegerType
+deriving Inhabited, Repr, DecidableEq, Hashable
+
+/--
   A tensor type in the form `tensor<shape x elementType>`.
   The full payload between `<` and `>` is kept as-is.
 -/
@@ -103,6 +112,8 @@ inductive Attribute
 | stringAttr (attr : StringAttr)
 /-- Unit attribute -/
 | unitAttr (attr : UnitAttr)
+/-- HEIR modarith type -/
+| modArithType (type : ModArithType)
 /-- Tensor type -/
 | tensorType (type : TensorType)
 /-- Function type -/
@@ -170,6 +181,10 @@ def Attribute.decEq (attr1 attr2 : Attribute) : Decidable (attr1 = attr2) := by
     exact (match decEq attr1 attr2 with
       | isTrue hEq => isTrue (by grind)
       | isFalse hEq => isFalse (by grind))
+  case modArithType.modArithType type1 type2 =>
+    exact (match decEq type1 type2 with
+      | isTrue hEq => isTrue (by grind)
+      | isFalse hEq => isFalse (by grind))
   case tensorType.tensorType type1 type2 =>
     exact (match decEq type1 type2 with
       | isTrue hEq => isTrue (by grind)
@@ -202,6 +217,12 @@ instance : ToString UnitAttr where
 
 instance : ToString UnregisteredAttr where
   toString attr := attr.value
+
+instance : ToString ModArithType where
+  toString type := s!"!mod_arith.int<{type.modulus}" ++
+    (match type.modulusType with
+    | some modulusType => s!" : {modulusType}"
+    | none => "") ++ ">"
 
 instance : ToString TensorType where
   toString type := s!"tensor<{type.value}>"
@@ -239,6 +260,7 @@ def Attribute.toString (attr : Attribute) : String :=
   | .integerAttr attr => ToString.toString attr
   | .stringAttr attr => ToString.toString attr
   | .unitAttr attr => ToString.toString attr
+  | .modArithType type => ToString.toString type
   | .tensorType type => ToString.toString type
   | .unregisteredAttr attr => ToString.toString attr
   | .functionType type => type.toString
@@ -272,6 +294,9 @@ instance : Coe UnitAttr Attribute where
 instance : Coe UnregisteredAttr Attribute where
   coe attr := .unregisteredAttr attr
 
+instance : Coe ModArithType Attribute where
+  coe type := .modArithType type
+
 instance : Coe TensorType Attribute where
   coe type := .tensorType type
 
@@ -297,6 +322,7 @@ def isType (attr : Attribute) : Bool :=
   | .integerAttr _ => false
   | .stringAttr _ => false
   | .unitAttr _ => false
+  | .modArithType _ => true
   | .tensorType _ => true
   | .unregisteredAttr attr => attr.isType
   | .functionType _ => true
@@ -308,6 +334,8 @@ theorem isType_unregistered unregistered :
   (unregisteredAttr unregistered).isType = unregistered.isType := by rfl
 @[simp, grind =]
 theorem isType_functionType type : (functionType type).isType = true := by rfl
+@[simp, grind =]
+theorem isType_modArithType type : (modArithType type).isType = true := by rfl
 @[simp, grind =]
 theorem isType_tensorType type : (tensorType type).isType = true := by rfl
 
@@ -344,6 +372,9 @@ def Attribute.asType (attr : Attribute) (isType : attr.isType := by grind) : Typ
 
 instance : Coe IntegerType TypeAttr where
   coe type := ⟨.integerType type, by rfl⟩
+
+instance : Coe ModArithType TypeAttr where
+  coe type := ⟨.modArithType type, by rfl⟩
 
 instance : Coe TensorType TypeAttr where
   coe type := ⟨.tensorType type, by rfl⟩
