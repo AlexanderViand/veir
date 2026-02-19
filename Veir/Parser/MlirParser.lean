@@ -207,11 +207,13 @@ def resolveOperand (operand : UnresolvedOperand) (expectedType : TypeAttr) : Mli
   Parse a type, if present.
 -/
 def parseOptionalType : MlirParserM (Option TypeAttr) := do
-  match AttrParser.parseOptionalType.run AttrParserState.mk (← getThe ParserState) with
-  | .ok (ty, _, parserState) =>
+  match (StateT.run AttrParser.parseOptionalType AttrParserState.mk).run (← getThe ParserState) with
+  | .ok (ty, _) parserState =>
     set parserState
     return ty
-  | .error err => throw err
+  | .error err parserState =>
+    set parserState
+    throw err
 
 /--
   Parse a type, otherwise return an error.
@@ -256,14 +258,16 @@ def parseOpProperties (opCode : OpCode) : MlirParserM (propertiesOf opCode) := d
     match Properties.fromAttrDict opCode {} with
     | .ok properties => return properties
     | .error err => throw err
-  match AttrParser.parseAttributeDictionary.run AttrParserState.mk (← getThe ParserState) with
-  | .ok (properties, _, parserState) =>
+  match (StateT.run AttrParser.parseAttributeDictionary AttrParserState.mk).run (← getThe ParserState) with
+  | .ok (properties, _) parserState =>
     set parserState
     parsePunctuation ">"
     match Properties.fromAttrDict opCode properties with
     | .ok properties => return properties
     | .error err => throw err
-  | .error err => throw err
+  | .error err parserState =>
+    set parserState
+    throw err
 
 /--
   Parse the attributes of an operation, if present.
