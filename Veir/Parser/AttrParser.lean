@@ -219,6 +219,35 @@ partial def parseOptionalDialectAttr : AttrParserM (Option Attribute) := do
   let value := (Slice.mk startPos endPos).of (← getThe ParserState).input
   return some (UnregisteredAttr.mk (String.fromUTF8! value) false)
 
+/--
+  Parse a dense attribute, if present.
+  This accepts forms like `dense<[...]> : tensor<...>`.
+-/
+partial def parseOptionalDenseAttr : AttrParserM (Option Attribute) := do
+  let savedState ← getThe ParserState
+  let startPos ← getPos
+  if not (← parseOptionalKeyword "dense".toByteArray) then
+    return none
+  parsePunctuation "<"
+  let _ ← parseUnregisteredAttrBody
+  parsePunctuation ">"
+  if not (← parseOptionalPunctuation ":") then
+    set savedState
+    return none
+  if let some _ ← parseOptionalIntegerType then
+    pure ()
+  else if let some _ ← parseOptionalModArithType then
+    pure ()
+  else if let some _ ← parseOptionalTensorType then
+    pure ()
+  else if let some _ ← parseOptionalDialectType then
+    pure ()
+  else
+    throw "type expected after ':' in dense attribute"
+  let endPos ← getPos
+  let value := (Slice.mk startPos endPos).of (← getThe ParserState).input
+  return some (UnregisteredAttr.mk (String.fromUTF8! value) false)
+
 mutual
 
 /--
@@ -275,6 +304,8 @@ partial def parseType (errorMsg : String := "type expected") : AttrParserM TypeA
 partial def parseOptionalAttribute : AttrParserM (Option Attribute) := do
   if let some dialectAttr ← parseOptionalDialectAttr then
     return some dialectAttr
+  else if let some denseAttr ← parseOptionalDenseAttr then
+    return some denseAttr
   else if let some type ← parseOptionalType then
     return some type.val
   else if let some integerAttr ← parseOptionalIntegerAttr then

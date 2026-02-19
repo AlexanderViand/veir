@@ -100,6 +100,28 @@ def testParseOp (s : String) : IO Unit :=
 
 /--
   info: "builtin.module"() ({
+  ^4():
+    %5 = "arith.constant"() <{ "value" = dense<[1, 2, 3, 4]> : tensor<4xi10>  }> : () -> tensor<4xi10>
+}) : () -> ()-/
+#guard_msgs in
+#eval! testParseOp r#""builtin.module"() ({
+^bb0:
+  %a = "arith.constant"() <{ "value" = dense<[1, 2, 3, 4]> : tensor<4xi10> }> : () -> tensor<4xi10>
+}) : () -> ()"#
+
+/--
+  info: "builtin.module"() ({
+  ^4():
+    %5 = "mod_arith.constant"() <{ "value" = dense<[1, 2, 3, 4]> : tensor<4xi4>  }> : () -> tensor<4x!mod_arith.int<17 : i10>>
+}) : () -> ()-/
+#guard_msgs in
+#eval! testParseOp r#""builtin.module"() ({
+^bb0:
+  %a = "mod_arith.constant"() <{ "value" = dense<[1, 2, 3, 4]> : tensor<4xi4> }> : () -> tensor<4x!mod_arith.int<17 : i10>>
+}) : () -> ()"#
+
+/--
+  info: "builtin.module"() ({
   ^4(%arg4_0 : i32, %arg4_1 : i32):
     %5 = "arith.addi"(%arg4_0, %arg4_1) : (i32, i32) -> i32
 }) : () -> ()-/

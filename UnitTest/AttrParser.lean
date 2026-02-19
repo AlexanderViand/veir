@@ -130,3 +130,8 @@ macro "#assert " e:term : command =>
 
 #assert expectSuccessAttr "#foo<bar>" (UnregisteredAttr.mk "#foo<bar>" false)
 #assert expectSuccessAttr "#test.test<bar>" (UnregisteredAttr.mk "#test.test<bar>" false)
+
+/-! ## Dense attribute -/
+
+#assert expectSuccessAttr "dense<[1, 2, 3, 4]> : tensor<4xi10>"
+  (UnregisteredAttr.mk "dense<[1, 2, 3, 4]> : tensor<4xi10>" false)
