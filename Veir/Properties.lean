@@ -23,6 +23,21 @@ def ArithConstantProperties.fromAttrDict (attrDict : Std.HashMap ByteArray Attri
   return { value := attr }
 
 /--
+  Properties of the `mod_arith.constant` operation.
+-/
+structure ModArithConstantProperties where
+  value : Attribute
+deriving Inhabited, Repr, Hashable
+
+def ModArithConstantProperties.fromAttrDict (attrDict : Std.HashMap ByteArray Attribute) :
+    Except String ModArithConstantProperties := do
+  if attrDict.size > 1 then
+    throw s!"mod_arith.constant: expected only 'value' property, but got {attrDict.size} properties"
+  let some attr := attrDict["value".toUTF8]?
+    | throw "mod_arith.constant: missing 'value' property"
+  return { value := attr }
+
+/--
   A type family that maps an operation code to the type of its properties.
   For operations that do not have any properties, the type is `Unit`.
 -/
@@ -30,6 +45,7 @@ def ArithConstantProperties.fromAttrDict (attrDict : Std.HashMap ByteArray Attri
 def propertiesOf (opCode : OpCode) : Type :=
 match opCode with
 | .arith_constant => ArithConstantProperties
+| .mod_arith_constant => ModArithConstantProperties
 | _ => Unit
 
 instance (opCode : OpCode) : Inhabited (propertiesOf opCode) := by
@@ -48,6 +64,7 @@ def Properties.fromAttrDict (opCode : OpCode) (attrDict : Std.HashMap ByteArray 
     Except String (propertiesOf opCode) := by
   cases opCode
   case arith_constant => exact (ArithConstantProperties.fromAttrDict attrDict)
+  case mod_arith_constant => exact (ModArithConstantProperties.fromAttrDict attrDict)
   all_goals exact (Except.ok ())
 
 /--
@@ -57,6 +74,8 @@ def Properties.toAttrDict (opCode : OpCode) (props : propertiesOf opCode) :
     Std.HashMap ByteArray Attribute :=
   match opCode with
   | .arith_constant =>
+    (Std.HashMap.emptyWithCapacity 2).insert "value".toUTF8 props.value
+  | .mod_arith_constant =>
     (Std.HashMap.emptyWithCapacity 2).insert "value".toUTF8 props.value
   | _ =>
     Std.HashMap.emptyWithCapacity 0
