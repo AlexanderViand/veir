@@ -185,6 +185,26 @@ partial def parseOptionalDialectType : AttrParserM (Option TypeAttr) := do
   return some (⟨UnregisteredAttr.mk (String.fromUTF8! value) true, by grind⟩)
 
 /--
+  Parse a tensor type, if present.
+  This accepts forms like `tensor<...>`.
+-/
+partial def parseOptionalTensorType : AttrParserM (Option TypeAttr) := do
+  let savedState ← getThe ParserState
+  let token ← peekToken
+  let .bareIdent := token.kind
+    | return none
+  let input := (← getThe ParserState).input
+  if token.slice.of input ≠ "tensor".toByteArray then
+    return none
+  let _ ← consumeToken
+  if not (← parseOptionalPunctuation "<") then
+    set savedState
+    return none
+  let body ← parseUnregisteredAttrBody
+  parsePunctuation ">"
+  return some (TensorType.mk body)
+
+/--
   Parse a dialect attribute, if present.
   A dialect attribute has the form `#dialect.name<body>`.
 -/
@@ -232,6 +252,8 @@ partial def parseOptionalFunctionType : AttrParserM (Option FunctionType) := do
 partial def parseOptionalType : AttrParserM (Option TypeAttr) := do
   if let some integerType ← parseOptionalIntegerType then
     return some integerType
+  if let some tensorType ← parseOptionalTensorType then
+    return some tensorType
   if let some dialectType ← parseOptionalDialectType then
     return some dialectType
   else if let some functionType := ← parseOptionalFunctionType then

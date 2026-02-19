@@ -122,6 +122,10 @@ macro "#assert " e:term : command =>
 #assert expectSuccessType "!foo<bar>" ⟨UnregisteredAttr.mk "!foo<bar>" true, by grind⟩
 #assert expectSuccessType "!test.test<bar>" ⟨UnregisteredAttr.mk "!test.test<bar>" true, by grind⟩
 
+/-! ## Tensor type -/
+
+#assert expectSuccessType "tensor<4xi10>" (TensorType.mk "4xi10")
+
 /-! ## Dialect attribute -/
 
 #assert expectSuccessAttr "#foo<bar>" (UnregisteredAttr.mk "#foo<bar>" false)

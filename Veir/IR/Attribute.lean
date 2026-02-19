@@ -70,6 +70,14 @@ structure UnregisteredAttr where
   isType : Bool
 deriving Inhabited, Repr, DecidableEq, Hashable
 
+/--
+  A tensor type in the form `tensor<shape x elementType>`.
+  The full payload between `<` and `>` is kept as-is.
+-/
+structure TensorType where
+  value : String
+deriving Inhabited, Repr, DecidableEq, Hashable
+
 mutual
 
 /--
@@ -95,6 +103,8 @@ inductive Attribute
 | stringAttr (attr : StringAttr)
 /-- Unit attribute -/
 | unitAttr (attr : UnitAttr)
+/-- Tensor type -/
+| tensorType (type : TensorType)
 /-- Function type -/
 | functionType (type : FunctionType)
 /-- An attribute from an unknown dialect. -/
@@ -160,6 +170,10 @@ def Attribute.decEq (attr1 attr2 : Attribute) : Decidable (attr1 = attr2) := by
     exact (match decEq attr1 attr2 with
       | isTrue hEq => isTrue (by grind)
       | isFalse hEq => isFalse (by grind))
+  case tensorType.tensorType type1 type2 =>
+    exact (match decEq type1 type2 with
+      | isTrue hEq => isTrue (by grind)
+      | isFalse hEq => isFalse (by grind))
   all_goals exact isFalse (by grind)
 termination_by sizeOf attr1
 end
@@ -188,6 +202,9 @@ instance : ToString UnitAttr where
 
 instance : ToString UnregisteredAttr where
   toString attr := attr.value
+
+instance : ToString TensorType where
+  toString type := s!"tensor<{type.value}>"
 
 mutual
 
@@ -222,6 +239,7 @@ def Attribute.toString (attr : Attribute) : String :=
   | .integerAttr attr => ToString.toString attr
   | .stringAttr attr => ToString.toString attr
   | .unitAttr attr => ToString.toString attr
+  | .tensorType type => ToString.toString type
   | .unregisteredAttr attr => ToString.toString attr
   | .functionType type => type.toString
 termination_by sizeOf attr
@@ -254,6 +272,9 @@ instance : Coe UnitAttr Attribute where
 instance : Coe UnregisteredAttr Attribute where
   coe attr := .unregisteredAttr attr
 
+instance : Coe TensorType Attribute where
+  coe type := .tensorType type
+
 instance : Coe FunctionType Attribute where
   coe type := .functionType type
 
@@ -276,6 +297,7 @@ def isType (attr : Attribute) : Bool :=
   | .integerAttr _ => false
   | .stringAttr _ => false
   | .unitAttr _ => false
+  | .tensorType _ => true
   | .unregisteredAttr attr => attr.isType
   | .functionType _ => true
 
@@ -286,6 +308,8 @@ theorem isType_unregistered unregistered :
   (unregisteredAttr unregistered).isType = unregistered.isType := by rfl
 @[simp, grind =]
 theorem isType_functionType type : (functionType type).isType = true := by rfl
+@[simp, grind =]
+theorem isType_tensorType type : (tensorType type).isType = true := by rfl
 
 end Attribute
 
@@ -320,6 +344,9 @@ def Attribute.asType (attr : Attribute) (isType : attr.isType := by grind) : Typ
 
 instance : Coe IntegerType TypeAttr where
   coe type := ⟨.integerType type, by rfl⟩
+
+instance : Coe TensorType TypeAttr where
+  coe type := ⟨.tensorType type, by rfl⟩
 
 instance : Coe FunctionType TypeAttr where
   coe type := ⟨.functionType type, by rfl⟩
