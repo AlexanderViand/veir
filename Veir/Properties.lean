@@ -11,7 +11,7 @@ public section
   Properties of the `arith.constant` operation.
 -/
 structure ArithConstantProperties where
-  value : IntegerAttr
+  value : Attribute
 deriving Inhabited, Repr, Hashable
 
 def ArithConstantProperties.fromAttrDict (attrDict : Std.HashMap ByteArray Attribute) :
@@ -20,9 +20,7 @@ def ArithConstantProperties.fromAttrDict (attrDict : Std.HashMap ByteArray Attri
     throw s!"arith.constant: expected only 'value' property, but got {attrDict.size} properties"
   let some attr := attrDict["value".toUTF8]?
     | throw "arith.constant: missing 'value' property"
-  let .integerAttr intAttr := attr
-    | throw s!"arith.constant: expected 'value' to be an integer attribute, but got {attr}"
-  return { value := intAttr }
+  return { value := attr }
 
 /--
   A type family that maps an operation code to the type of its properties.
@@ -59,7 +57,7 @@ def Properties.toAttrDict (opCode : OpCode) (props : propertiesOf opCode) :
     Std.HashMap ByteArray Attribute :=
   match opCode with
   | .arith_constant =>
-    (Std.HashMap.emptyWithCapacity 2).insert "value".toUTF8 (Attribute.integerAttr props.value)
+    (Std.HashMap.emptyWithCapacity 2).insert "value".toUTF8 props.value
   | _ =>
     Std.HashMap.emptyWithCapacity 0
 

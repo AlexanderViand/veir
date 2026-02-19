@@ -11,6 +11,11 @@ set_option warn.sorry false
 
 namespace Veir.Benchmarks
 
+def getArithConstantValue? (ctx : IRContext) (op : OperationPtr) : Option Int := do
+  let .integerAttr value := (op.getProperties! ctx .arith_constant).value
+    | none
+  return value.value
+
 namespace Pattern
 
 def addIConstantFolding (rewriter: PatternRewriter) (op: OperationPtr) : Option PatternRewriter := do
@@ -37,8 +42,8 @@ def addIConstantFolding (rewriter: PatternRewriter) (op: OperationPtr) : Option 
     return rewriter
 
   -- Sum both constant values
-  let lhsVal := (lhsOp.getProperties! rewriter.ctx .arith_constant).value.value
-  let rhsVal := (rhsOp.getProperties! rewriter.ctx .arith_constant).value.value
+  let lhsVal ← getArithConstantValue? rewriter.ctx lhsOp
+  let rhsVal ← getArithConstantValue? rewriter.ctx rhsOp
   let newVal := ArithConstantProperties.mk (IntegerAttr.mk (lhsVal + rhsVal) (IntegerType.mk 32))
   let (rewriter, newOp) ← rewriter.createOp .arith_constant #[IntegerType.mk 32] #[] #[] #[] newVal (some $ .before op) sorry sorry sorry sorry
   let mut rewriter ← rewriter.replaceOp op newOp sorry sorry sorry
@@ -73,8 +78,8 @@ def addIConstantFoldingLocal (ctx: IRContext) (op: OperationPtr) :
     | some (ctx, none)
 
   -- Sum both constant values
-  let lhsVal := (lhsOp.getProperties! ctx .arith_constant).value.value
-  let rhsVal := (rhsOp.getProperties! ctx .arith_constant).value.value
+  let lhsVal ← getArithConstantValue? ctx lhsOp
+  let rhsVal ← getArithConstantValue? ctx rhsOp
   let newVal := ArithConstantProperties.mk (IntegerAttr.mk (lhsVal + rhsVal) (IntegerType.mk 32))
   let (ctx, newOp) ← Rewriter.createOp ctx .arith_constant #[IntegerType.mk 32] #[] #[] #[] newVal none sorry sorry sorry sorry sorry
   return (ctx, some (#[newOp], #[newOp.getResult 0]))
@@ -91,7 +96,7 @@ def addIZeroFolding (rewriter: PatternRewriter) (op: OperationPtr) : Option Patt
   let rhsOpStruct := rhsOp.get rewriter.ctx (by sorry)
   if rhsOpStruct.opType ≠ .arith_constant then
     return rewriter
-  if (rhsOp.getProperties! rewriter.ctx .arith_constant).value.value ≠ 0 then
+  if (← getArithConstantValue? rewriter.ctx rhsOp) ≠ 0 then
     return rewriter
 
   -- Get the lhs value
@@ -117,7 +122,7 @@ def mulITwoReduce (rewriter: PatternRewriter) (op: OperationPtr) : Option Patter
   let rhsOpStruct := rhsOp.get rewriter.ctx (by sorry)
   if rhsOpStruct.opType ≠ .arith_constant then
     return rewriter
-  if (rhsOp.getProperties! rewriter.ctx .arith_constant).value.value ≠ 2 then
+  if (← getArithConstantValue? rewriter.ctx rhsOp) ≠ 2 then
     return rewriter
 
   -- Get the lhs value
@@ -162,8 +167,8 @@ def addIConstantFolding (ctx: IRContext) (op: OperationPtr) : Option IRContext :
     return ctx
 
   -- Sum both constant values
-  let lhsVal := (lhsOp.getProperties! ctx .arith_constant).value.value
-  let rhsVal := (rhsOp.getProperties! ctx .arith_constant).value.value
+  let lhsVal ← getArithConstantValue? ctx lhsOp
+  let rhsVal ← getArithConstantValue? ctx rhsOp
   let newVal := ArithConstantProperties.mk (IntegerAttr.mk (lhsVal + rhsVal) (IntegerType.mk 32))
   let (ctx, newOp) ← Rewriter.createOp ctx .arith_constant #[IntegerType.mk 32] #[] #[] #[] newVal (some $ .before op) sorry sorry sorry sorry sorry
   let mut ctx ← Rewriter.replaceOp? ctx op newOp sorry sorry sorry sorry
@@ -186,7 +191,7 @@ def addIZeroFolding (ctx: IRContext) (op: OperationPtr) : Option IRContext := do
   let rhsOpStruct := rhsOp.get ctx (by sorry)
   if rhsOpStruct.opType ≠ .arith_constant then
     return ctx
-  if (rhsOp.getProperties! ctx .arith_constant).value.value ≠ 0 then
+  if (← getArithConstantValue? ctx rhsOp) ≠ 0 then
     return ctx
 
   -- Get the lhs value
@@ -212,7 +217,7 @@ def mulITwoReduce (ctx: IRContext) (op: OperationPtr) : Option IRContext := do
   let rhsOpStruct := rhsOp.get ctx (by sorry)
   if rhsOpStruct.opType ≠ .arith_constant then
     return ctx
-  if (rhsOp.getProperties! ctx .arith_constant).value.value ≠ 2 then
+  if (← getArithConstantValue? ctx rhsOp) ≠ 2 then
     return ctx
 
   -- Get the lhs value
