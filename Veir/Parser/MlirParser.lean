@@ -10,9 +10,11 @@ open Veir.AttrParser
 
 namespace Veir.Parser
 
+variable {ctx : IRContext OpCode}
+
 structure MlirParserState where
   /-- The current IR context. -/
-  ctx : IRContext
+  ctx : IRContext OpCode
   /-- The values that have been defined at that point in the parser. -/
   values : Std.HashMap ByteArray ValuePtr
   /--
@@ -22,7 +24,7 @@ structure MlirParserState where
   -/
   blocks : Std.HashMap ByteArray (BlockPtr × Bool)
 
-def MlirParserState.fromContext (ctx : IRContext) : MlirParserState :=
+def MlirParserState.fromContext (ctx : IRContext OpCode) : MlirParserState :=
   {ctx := ctx, values := Std.HashMap.emptyWithCapacity 128, blocks := Std.HashMap.emptyWithCapacity 1}
 
 abbrev MlirParserM := StateT MlirParserState (EStateM String ParserState)
@@ -50,7 +52,7 @@ def MlirParserM.run' (self : MlirParserM α)
 /--
   Get the current IR context that is stored in the parser state.
 -/
-def getContext : MlirParserM IRContext := do
+def getContext : MlirParserM (IRContext OpCode) := do
   return (← get).ctx
 
 /--
@@ -77,7 +79,7 @@ def registerValueDef (name : ByteArray) (value : ValuePtr) : MlirParserM Unit :=
   This should be called whenever any modifications have been made to the context
   outside of the parser monad.
 -/
-def setContext (ctx : IRContext) : MlirParserM Unit := do
+def setContext (ctx : IRContext OpCode) : MlirParserM Unit := do
   modify fun s => {s with ctx := ctx}
 
 set_option warn.sorry false in

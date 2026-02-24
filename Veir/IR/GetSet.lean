@@ -5,6 +5,9 @@ import all Veir.IR.Basic
 
 namespace Veir
 
+variable {OpInfo : Type} [HasOpInfo OpInfo]
+variable {ctx ctx': IRContext OpInfo}
+
 public section
 
 setup_grind_with_get_set_definitions
