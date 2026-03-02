@@ -118,6 +118,10 @@ match opCode with
 | .llvm_sdiv => ExactProperties
 | .riscv_li => RISCVImmediateProperties
 | .riscv_lui => RISCVImmediateProperties
+| .riscv_auipc => RISCVImmediateProperties
+| .riscv_andi => RISCVImmediateProperties
+| .riscv_ori => RISCVImmediateProperties
+| .riscv_xori => RISCVImmediateProperties
 | _ => Unit
 
 instance : HasOpInfo OpCode where
@@ -159,6 +163,10 @@ def Properties.fromAttrDict (opCode : OpCode) (attrDict : Std.HashMap ByteArray 
   case llvm_sdiv => exact (ExactProperties.fromAttrDict attrDict)
   case riscv_li => exact (RISCVImmediateProperties.fromAttrDict attrDict)
   case riscv_lui => exact (RISCVImmediateProperties.fromAttrDict attrDict)
+  case riscv_auipc => exact (RISCVImmediateProperties.fromAttrDict attrDict)
+  case riscv_andi => exact (RISCVImmediateProperties.fromAttrDict attrDict)
+  case riscv_ori => exact (RISCVImmediateProperties.fromAttrDict attrDict)
+  case riscv_xori => exact (RISCVImmediateProperties.fromAttrDict attrDict)
   all_goals exact (Except.ok ())
 
 /--
@@ -183,9 +191,7 @@ def Properties.toAttrDict (opCode : OpCode) (props : propertiesOf opCode) :
     if props.exact then
       dict := dict.insert "exact".toUTF8 (Attribute.unitAttr UnitAttr.mk)
     dict
-  | .riscv_li =>
-    (Std.HashMap.emptyWithCapacity 2).insert "value".toUTF8 (Attribute.integerAttr props.value)
-  | .riscv_lui =>
+  | .riscv_li  | .riscv_lui | .riscv_auipc | .riscv_andi | .riscv_ori | .riscv_xori =>
     (Std.HashMap.emptyWithCapacity 2).insert "value".toUTF8 (Attribute.integerAttr props.value)
   | _ =>
     Std.HashMap.emptyWithCapacity 0
