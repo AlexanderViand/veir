@@ -171,6 +171,18 @@ def interpretOp' (opType : OpCode) (properties : HasOpInfo.propertiesOf opType)
     let [.reg op] := operands.toList | none
     let imm := BitVec.ofNat 20 properties.value.value.toNat
     return (#[.reg (RISCV.auipc imm op)], .continue)
+  | .riscv_addi => do
+    let #[.reg op] := operands | none
+    let imm := BitVec.ofNat 12 properties.value.value.toNat
+    return (#[.reg (RISCV.addi imm op)], .continue)
+  | .riscv_slti => do
+    let #[.reg op] := operands | none
+    let imm := BitVec.ofNat 12 properties.value.value.toNat
+    return (#[.reg (RISCV.slti imm op)], .continue)
+  | .riscv_sltiu => do
+    let #[.reg op] := operands | none
+    let imm := BitVec.ofNat 12 properties.value.value.toNat
+    return (#[.reg (RISCV.sltiu imm op)], .continue)
   | .riscv_andi => do
     let [.reg op] := operands.toList | none
     let imm := BitVec.ofNat 12 properties.value.value.toNat
@@ -183,6 +195,22 @@ def interpretOp' (opType : OpCode) (properties : HasOpInfo.propertiesOf opType)
     let [.reg op] := operands.toList | none
     let imm := BitVec.ofNat 12 properties.value.value.toNat
     return (#[.reg (RISCV.xori imm op)], .continue)
+  | .riscv_addiw => do
+    let #[.reg op] := operands | none
+    let imm := BitVec.ofNat 12 properties.value.value.toNat
+    return (#[.reg (RISCV.addiw imm op)], .continue)
+  | .riscv_slli => do
+    let #[.reg op] := operands | none
+    let imm := BitVec.ofNat 6 properties.value.value.toNat
+    return (#[.reg (RISCV.slli imm op)], .continue)
+  | .riscv_srli => do
+    let #[.reg op] := operands | none
+    let imm := BitVec.ofNat 6 properties.value.value.toNat
+    return (#[.reg (RISCV.srli imm op)], .continue)
+  | .riscv_srai => do
+    let #[.reg op] := operands | none
+    let imm := BitVec.ofNat 6 properties.value.value.toNat
+    return (#[.reg (RISCV.srai imm op)], .continue)
   | _ => none
 
 /--
