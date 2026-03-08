@@ -68,6 +68,14 @@ def barrettReduceStepNat (m a : Nat) : Nat :=
   let q := (a * mu) >>> k
   a - q * m
 
+
+def subifgeNat (m x : Nat) : Nat :=
+  let sub := x - m
+  if x ≥ m then
+    x
+  else
+    sub
+
 /--
   Convert a runtime value to an integer.
   Poison values are not supported by the current mod-arith semantics.
