@@ -548,6 +548,19 @@ def OperationPtr.verifyLocalInvariants (op : OperationPtr) (ctx : IRContext OpCo
       throw "Expected 0 regions"
     if op.getNumSuccessors ctx opIn ≠ 0 then
       throw "Expected 0 successors"
+    let operand0Type := (op.getOperand! ctx 0).getType! ctx
+    let operand1Type := (op.getOperand! ctx 1).getType! ctx
+    let result0Type := ((op.getResult 0).get! ctx).type
+    let .modArithType _ := operand0Type.val
+      | throw s!"Expected operand 0 to have mod_arith type, but got {operand0Type}"
+    let .modArithType _ := operand1Type.val
+      | throw s!"Expected operand 1 to have mod_arith type, but got {operand1Type}"
+    let .modArithType _ := result0Type.val
+      | throw s!"Expected result 0 to have mod_arith type, but got {result0Type}"
+    if operand0Type ≠ operand1Type then
+      throw s!"Expected operands 0 and 1 to have the same type, but got {operand0Type} and {operand1Type}"
+    if result0Type ≠ operand0Type then
+      throw s!"Expected result 0 to have type {operand0Type}, but got {result0Type}"
     pure ()
   | .mod_arith_constant => do
     if op.getNumOperands ctx opIn ≠ 0 then
@@ -558,6 +571,15 @@ def OperationPtr.verifyLocalInvariants (op : OperationPtr) (ctx : IRContext OpCo
       throw "Expected 0 regions"
     if op.getNumSuccessors ctx opIn ≠ 0 then
       throw "Expected 0 successors"
+    let result0Type := ((op.getResult 0).get! ctx).type
+    let .modArithType modArithType := result0Type.val
+      | throw s!"Expected result 0 to have mod_arith type, but got {result0Type}"
+    let properties := op.getProperties! ctx .mod_arith_constant
+    match modArithType.modulusType with
+    | some modulusType =>
+      if properties.value.type ≠ modulusType then
+        throw s!"Expected property 'value' to have type {modulusType}, but got {properties.value.type}"
+    | none => pure ()
     pure ()
   | .mod_arith_mul => do
     if op.getNumOperands ctx opIn ≠ 2 then
@@ -568,6 +590,19 @@ def OperationPtr.verifyLocalInvariants (op : OperationPtr) (ctx : IRContext OpCo
       throw "Expected 0 regions"
     if op.getNumSuccessors ctx opIn ≠ 0 then
       throw "Expected 0 successors"
+    let operand0Type := (op.getOperand! ctx 0).getType! ctx
+    let operand1Type := (op.getOperand! ctx 1).getType! ctx
+    let result0Type := ((op.getResult 0).get! ctx).type
+    let .modArithType _ := operand0Type.val
+      | throw s!"Expected operand 0 to have mod_arith type, but got {operand0Type}"
+    let .modArithType _ := operand1Type.val
+      | throw s!"Expected operand 1 to have mod_arith type, but got {operand1Type}"
+    let .modArithType _ := result0Type.val
+      | throw s!"Expected result 0 to have mod_arith type, but got {result0Type}"
+    if operand0Type ≠ operand1Type then
+      throw s!"Expected operands 0 and 1 to have the same type, but got {operand0Type} and {operand1Type}"
+    if result0Type ≠ operand0Type then
+      throw s!"Expected result 0 to have type {operand0Type}, but got {result0Type}"
     pure ()
   | .mod_arith_sub => do
     if op.getNumOperands ctx opIn ≠ 2 then
@@ -578,6 +613,19 @@ def OperationPtr.verifyLocalInvariants (op : OperationPtr) (ctx : IRContext OpCo
       throw "Expected 0 regions"
     if op.getNumSuccessors ctx opIn ≠ 0 then
       throw "Expected 0 successors"
+    let operand0Type := (op.getOperand! ctx 0).getType! ctx
+    let operand1Type := (op.getOperand! ctx 1).getType! ctx
+    let result0Type := ((op.getResult 0).get! ctx).type
+    let .modArithType _ := operand0Type.val
+      | throw s!"Expected operand 0 to have mod_arith type, but got {operand0Type}"
+    let .modArithType _ := operand1Type.val
+      | throw s!"Expected operand 1 to have mod_arith type, but got {operand1Type}"
+    let .modArithType _ := result0Type.val
+      | throw s!"Expected result 0 to have mod_arith type, but got {result0Type}"
+    if operand0Type ≠ operand1Type then
+      throw s!"Expected operands 0 and 1 to have the same type, but got {operand0Type} and {operand1Type}"
+    if result0Type ≠ operand0Type then
+      throw s!"Expected result 0 to have type {operand0Type}, but got {result0Type}"
     pure ()
   /- RISCV -/
   | .riscv_li => do
