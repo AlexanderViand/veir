@@ -59,18 +59,17 @@ def natBitLength (n : Nat) : Nat :=
   if n = 0 then 0 else Nat.log2 n + 1
 
 /--
-  Barrett-reduction (first step, no condition subtraction).
-  Produces a value that is either `a mod m` or `a mod m + m`
-  for `a` in [0, m^2) and `m > 0`.
+  Barrett-reduction (first step, no condition subtraction),
+  with scaling factor k (should be 2^k > m)
+  Produces a value that is either `x mod m` or `x mod m + m`
+  for `x` in [0, m^2) and `m > 0`.
 -/
-def barrettReduceStepNat (m a : Nat) : Nat :=
+def barrettReduceStepNat (m x k : Nat) : Nat :=
   /- precomputable constants that depend only on m -/
-  let bitWidth := natBitLength (m - 1)
-  let k := 2 * bitWidth
-  let mu := ((1 : Nat) <<< k) / m
+  let mu := ((1 : Nat) <<< (2*k)) / m
   /- proper reduction step -/
-  let q := (a * mu) >>> k
-  a - q * m
+  let q := (x * mu) >>> k
+  x - q * m
 
 /--
   Convert a runtime value to an integer.
@@ -483,7 +482,7 @@ def interpretOp' (opType : OpCode) (properties : HasOpInfo.propertiesOf opType)
     | .val inputBits =>
       let inputNat := inputBits.toNat
       if inputNat < qSquared then
-        let reducedNat := barrettReduceStepNat qNat inputNat
+        let reducedNat := barrettReduceStepNat qNat inputNat 42 /- intentionally wrong interpreter semantics here! -/
         return (#[.int resultIntType.bitwidth (.val (BitVec.ofNat resultIntType.bitwidth reducedNat))], .continue)
       else
         return (#[poisonResult], .continue)
