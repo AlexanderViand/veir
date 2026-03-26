@@ -201,6 +201,22 @@ def interpretOp' (opType : OpCode) (properties : HasOpInfo.propertiesOf opType)
     let .integerType resBw := resType.val | none
     if h: resBw.bitwidth <= w then none else
     return (#[.int resBw.bitwidth (LLVM.Int.sext val resBw.bitwidth (by omega))], .continue)
+  | .arith_cmpi => do
+    let resType ← resultTypes[0]?
+    let .integerType resultIntType := resType.val
+      | none
+    if resultIntType.bitwidth ≠ 1 then
+      none
+    else
+      let [.int bw lhs, .int bw' rhs] := operands.toList | none
+      if h : bw' ≠ bw then none else
+      let rhs := rhs.cast (by simp at h; exact h)
+      let result : LLVM.Int 1 :=
+        match lhs, rhs with
+        | .val lhs, .val rhs =>
+          .val (BitVec.ofNat 1 (if lhs.toNat >= rhs.toNat then 1 else 0))
+        | _, _ => .poison
+      return (#[.int 1 result], .continue)
   | .arith_select => do
     let [.int 1 cond, .int bw lhs, .int bw' rhs] := operands.toList | none
     if h: bw' ≠ bw then none else
