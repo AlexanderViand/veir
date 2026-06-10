@@ -557,53 +557,33 @@ def ModArith.interpretOp' (opType : Veir.Mod_Arith) (properties : HasDialectOpIn
   | .add => do
     let some resType := resultTypes[0]? | none
     let .modArithType modArithType := resType.val | none
-    let modulus := modArithType.modulus.value
+    let q := modArithType.modulus.value
     let bw := modArithType.modulus.type.bitwidth
-    let [.int bw' lhs, .int bw'' rhs] := operands.toList | none
-    if h: bw ≠ bw' ∨ bw' ≠ bw'' then none else
-    let rhs := rhs.cast (by simp at h; exact h.right.symm)
-    let wideBw := bw' + 1
-    let intModulus := .val (BitVec.ofInt wideBw modulus)
-    let lhs := LLVM.Int.zext lhs wideBw false (by omega)
-    let rhs := LLVM.Int.zext rhs wideBw false (by omega)
-    let add := LLVM.Int.add lhs rhs false true
-    let rem := LLVM.Int.urem add intModulus
-    let res := LLVM.Int.trunc rem bw' false true (by omega)
-    return (#[.int bw' res], none)
+    let [.int bw₁ (.val lhs), .int bw₂ (.val rhs)] := operands.toList | none
+    if h₁ : bw₁ ≠ bw then none else
+    if h₂ : bw₂ ≠ bw then none else
+    return (#[.int bw (.val (Data.ModArith.add q (lhs.cast (by omega)) (rhs.cast (by omega))))],
+      none)
   | .sub => do
     let some resType := resultTypes[0]? | none
     let .modArithType modArithType := resType.val | none
-    let modulus := modArithType.modulus.value
+    let q := modArithType.modulus.value
     let bw := modArithType.modulus.type.bitwidth
-    let [.int bw' lhs, .int bw'' rhs] := operands.toList | none
-    if h: bw ≠ bw' ∨ bw' ≠ bw'' then none else
-    let rhs := rhs.cast (by simp at h; exact h.right.symm)
-    let wideBw := bw' + 1
-    let intModulus := .val (BitVec.ofInt wideBw modulus)
-    let lhs := LLVM.Int.zext lhs wideBw false (by omega)
-    let rhs := LLVM.Int.zext rhs wideBw false (by omega)
-    /- we compute a - b (mod q) as ((a + q) - b) % q to avoid underflow -/
-    let add := LLVM.Int.add lhs intModulus false true
-    let sub := LLVM.Int.sub add rhs false true
-    let rem := LLVM.Int.urem sub intModulus
-    let res := LLVM.Int.trunc rem bw' false true (by omega)
-    return (#[.int bw' res], none)
+    let [.int bw₁ (.val lhs), .int bw₂ (.val rhs)] := operands.toList | none
+    if h₁ : bw₁ ≠ bw then none else
+    if h₂ : bw₂ ≠ bw then none else
+    return (#[.int bw (.val (Data.ModArith.sub q (lhs.cast (by omega)) (rhs.cast (by omega))))],
+      none)
   | .mul => do
     let some resType := resultTypes[0]? | none
     let .modArithType modArithType := resType.val | none
-    let modulus := modArithType.modulus.value
+    let q := modArithType.modulus.value
     let bw := modArithType.modulus.type.bitwidth
-    let [.int bw' lhs, .int bw'' rhs] := operands.toList | none
-    if h: bw ≠ bw' ∨ bw' ≠ bw'' then none else
-    let rhs := rhs.cast (by simp at h; exact h.right.symm)
-    let wideBw := bw' + bw' + 1
-    let intModulus := .val (BitVec.ofInt wideBw modulus)
-    let lhs := LLVM.Int.zext lhs wideBw false (by omega)
-    let rhs := LLVM.Int.zext rhs wideBw false (by omega)
-    let mul := LLVM.Int.mul lhs rhs false true
-    let rem := LLVM.Int.urem mul intModulus
-    let res := LLVM.Int.trunc rem bw' false true (by omega)
-    return (#[.int bw' res], none)
+    let [.int bw₁ (.val lhs), .int bw₂ (.val rhs)] := operands.toList | none
+    if h₁ : bw₁ ≠ bw then none else
+    if h₂ : bw₂ ≠ bw then none else
+    return (#[.int bw (.val (Data.ModArith.mul q (lhs.cast (by omega)) (rhs.cast (by omega))))],
+      none)
 
 
 def Llvm.interpretOp' (opType : Veir.Llvm) (properties : HasDialectOpInfo.propertiesOf opType)
