@@ -220,6 +220,7 @@ def lowerBinop (modOp : Mod_Arith)
     let some (newCtx, newOps) := buildOps ctx (recipe operands[0]! operands[1]! mt)
       | none
     let some result := newOps.back? | none
+    if hres : ¬ (result.getResult 0 : ValuePtr).InBounds newCtx.raw then none else
     return (newCtx, some (newOps, #[(result.getResult 0 : ValuePtr)]))
 
 /-- Lower `mod_arith.constant` (see `constantRecipe`). -/
@@ -234,6 +235,7 @@ def lowerConstant : LocalRewritePattern OpCode :=
     let some (newCtx, newOps) := buildOps ctx (constantRecipe props.value.value mt)
       | none
     let some result := newOps.back? | none
+    if hres : ¬ (result.getResult 0 : ValuePtr).InBounds newCtx.raw then none else
     return (newCtx, some (newOps, #[(result.getResult 0 : ValuePtr)]))
 
 end ModArithToArith
