@@ -11,168 +11,246 @@ namespace Veir
   translating `!mod_arith.int<q : iN>` values to their canonical representation in `[0, q)`.
   The current lowering is trivial, eagerly reducing at all times.
 
-  Since VEIR has no Dialect Conversion framework, this pass eagerly inserts unrealized_conversion_casts
-  to handle the type conversions between `!mod_arith.int<q : iN>` and `iN` that are needed.
+  Since VEIR has no Dialect Conversion framework, this pass eagerly inserts
+  unrealized_conversion_casts to handle the type conversions between `!mod_arith.int<q:iN>`
+  and `iN` that are needed.
+
+  Each lowering is written as a `LocalRewritePattern`: it describes the operations to create
+  as a pure *recipe* (`List OpDescr`), which a generic driver (`buildOps`) materializes as
+  detached operations. The `RewritePattern.fromLocalRewrite` adapter then inserts them before
+  the matched operation, replaces its results, and erases it. This shape lets us prove the
+  patterns correct against the interpreter semantics of `mod_arith`.
 -/
 
-/-! ## Unrealized Conversion Casts -/
+namespace ModArithToArith
 
-set_option warn.sorry false in
-/-- Emit `unrealized_conversion_cast v : !mod_arith.int<q:iN> → iN`. -/
-def castToStorage (rewriter : PatternRewriter OpCode) (v : ValuePtr) (ip : InsertPoint) :
-    Option (PatternRewriter OpCode × ValuePtr) := do
-  let .modArithType mt := (v.getType! rewriter.ctx.raw).val
-    | none
-  let storageType : TypeAttr := mt.modulus.type
-  let (rewriter, castOp) ← rewriter.createOp (.builtin .unrealized_conversion_cast)
-    #[storageType] #[v] #[] #[] () (some ip) sorry (by simp) (by simp) sorry
-  return (rewriter, (castOp.getResult 0 : ValuePtr))
+/-!
+  ## Op recipes
 
-set_option warn.sorry false in
-/-- Emit `unrealized_conversion_cast x : iN → ty`, where `ty` is a `mod_arith` type. -/
-def castToModArith (rewriter : PatternRewriter OpCode) (x : ValuePtr) (ty : ModArithType)
-    (ip : InsertPoint) : Option (PatternRewriter OpCode × ValuePtr) := do
-  let (rewriter, castOp) ← rewriter.createOp (.builtin .unrealized_conversion_cast)
-    #[ty] #[x] #[] #[] () (some ip) sorry (by simp) (by simp) sorry
-  return (rewriter, (castOp.getResult 0 : ValuePtr))
+  A lowering pattern is described by a list of `OpDescr`s, each of which describes one
+  operation to create. Operands refer either to values that already exist in the context
+  (`OperandRef.outer`) or to results of operations created earlier in the same recipe
+  (`OperandRef.created`).
+-/
 
-/-! ## Unpack / Pack ModArithType -/
-
-set_option warn.sorry false in
 /--
-  Unpack a `!mod_arith.int<q:iN>` value `v` into the IntegerType `intermediateType`
+  A reference to an operand of an operation that is about to be created: either a value
+  that already exists in the context, or the `result`-th result of the `op`-th operation
+  created earlier in the same recipe.
 -/
-def unpackValue (rewriter : PatternRewriter OpCode) (v : ValuePtr) (intermediateType : IntegerType)
-    (ip : InsertPoint) : Option (PatternRewriter OpCode × ValuePtr) := do
-  let (rewriter, stored) ← castToStorage rewriter v ip
-  let .integerType storageType := (stored.getType! rewriter.ctx.raw).val
-    | none
-  if intermediateType.bitwidth > storageType.bitwidth then
-    let (rewriter, ext) ← rewriter.createOp (.arith .extui)
-      #[intermediateType] #[stored] #[] #[] { nneg := false } (some ip) sorry (by simp) (by simp) sorry
-    return (rewriter, (ext.getResult 0 : ValuePtr))
-  else
-    return (rewriter, stored)
+inductive OperandRef where
+  | outer (v : ValuePtr)
+  | created (op : Nat) (result : Nat)
 
-set_option warn.sorry false in
+/-- A description of a single operation to create. -/
+structure OpDescr where
+  opType : OpCode
+  resultTypes : Array TypeAttr
+  operands : Array OperandRef
+  properties : propertiesOf opType
+
 /--
-  Pack an IntegerType value `v` of IntegerType `intermediateType` into a value of `!mod_arith.int<q:iN>` type `ty`.
+  Resolve an operand reference to a value that is in bounds of the given context.
+  Returns `none` if the reference is dangling.
 -/
-def packValue (rewriter : PatternRewriter OpCode) (v : ValuePtr) (ty : ModArithType)
-    (ip : InsertPoint) : Option (PatternRewriter OpCode × ValuePtr) := do
-  let .integerType intermediateType := (v.getType! rewriter.ctx.raw).val
-    | none
-  let storageType := ty.modulus.type
-  if intermediateType.bitwidth > storageType.bitwidth then
-    let (rewriter, narrowed) ← rewriter.createOp (.arith .trunci)
-      #[storageType] #[v] #[] #[] { nsw := false, nuw := true }
-      (some ip) sorry (by simp) (by simp) sorry
-    castToModArith rewriter (narrowed.getResult 0 : ValuePtr) ty ip
-  else
-    castToModArith rewriter (v : ValuePtr) ty ip
+def OperandRef.resolve (ctx : WfIRContext OpCode) (ops : Array OperationPtr) :
+    OperandRef → Option {v : ValuePtr // v.InBounds ctx.raw}
+  | .outer v =>
+    if h : v.InBounds ctx.raw then some ⟨v, h⟩ else none
+  | .created idx res => do
+    let some op := ops[idx]? | none
+    if h : (op.getResult res : ValuePtr).InBounds ctx.raw then
+      some ⟨(op.getResult res : ValuePtr), h⟩
+    else
+      none
 
+/--
+  Create the operations described by `descrs`, without inserting them into a block.
+  Return the new context and the created operations (appended to `ops`), or `none` if
+  an operand reference cannot be resolved or an operation cannot be created.
+-/
+def buildOps (ctx : WfIRContext OpCode) (descrs : List OpDescr)
+    (ops : Array OperationPtr := #[]) :
+    Option (WfIRContext OpCode × Array OperationPtr) :=
+  match descrs with
+  | [] => some (ctx, ops)
+  | descr :: rest => do
+    let some resolved := descr.operands.mapM (OperandRef.resolve ctx ops) | none
+    match WfRewriter.createOp ctx descr.opType descr.resultTypes (resolved.map (·.val))
+        #[] #[] descr.properties none
+        (by intro oper hmem
+            obtain ⟨s, _, rfl⟩ := Array.exists_of_mem_map hmem
+            exact s.2)
+        (by simp) (by simp) (by simp [Option.maybe]) with
+    | none => none
+    | some (ctx, newOp) => buildOps ctx rest (ops.push newOp)
 
-/-! ## Arith Helpers -/
+/-- Describe `builtin.unrealized_conversion_cast %input : ... -> resultType`. -/
+def castDescr (input : OperandRef) (resultType : TypeAttr) : OpDescr :=
+  { opType := .builtin .unrealized_conversion_cast
+    resultTypes := #[resultType]
+    operands := #[input]
+    properties := () }
 
-set_option warn.sorry false in
-/-- Emit `arith.constant c : i<width>`. Requires c to fit into width (unsigned) -/
-def emitArithConstant (rewriter : PatternRewriter OpCode) (c : Int) (width : Nat)
-    (ip : InsertPoint) : Option (PatternRewriter OpCode × ValuePtr) := do
-  let ty : TypeAttr := IntegerType.mk width
-  let props : ArithConstantProperties := { value := IntegerAttr.mk c (IntegerType.mk width) }
-  let (rewriter, c) ← rewriter.createOp (.arith .constant)
-    #[ty] #[] #[] #[] props (some ip) sorry (by simp) (by simp) sorry
-  return (rewriter, (c.getResult 0 : ValuePtr))
+/-- Describe `arith.constant c : i<width>`. Requires `c` to fit into `width` (unsigned). -/
+def constantDescr (c : Int) (width : Nat) : OpDescr :=
+  { opType := .arith .constant
+    resultTypes := #[(IntegerType.mk width : TypeAttr)]
+    operands := #[]
+    properties := { value := IntegerAttr.mk c (IntegerType.mk width) } }
 
-set_option warn.sorry false in
-/-- Emit a binary Arith op `arithOp` on `a` and `b` -/
-def emitArithBinOp (rewriter : PatternRewriter OpCode) (arithOp : Arith)
-    (props : propertiesOf (.arith arithOp)) (a b : ValuePtr) (ip : InsertPoint) :
-    Option (PatternRewriter OpCode × ValuePtr) := do
-  let ty := a.getType! rewriter.ctx.raw
-  let (rewriter, r) ← rewriter.createOp (.arith arithOp)
-    #[ty] #[a, b] #[] #[] props (some ip) sorry (by simp) (by simp) sorry
-  return (rewriter, (r.getResult 0 : ValuePtr))
+/-- Describe `arith.extui %input : i<N> -> i<width>`. -/
+def extuiDescr (input : OperandRef) (width : Nat) : OpDescr :=
+  { opType := .arith .extui
+    resultTypes := #[(IntegerType.mk width : TypeAttr)]
+    operands := #[input]
+    properties := { nneg := false } }
 
+/-- Describe `arith.trunci %input : ... -> i<width>` with `nuw` set. -/
+def trunciNuwDescr (input : OperandRef) (width : Nat) : OpDescr :=
+  { opType := .arith .trunci
+    resultTypes := #[(IntegerType.mk width : TypeAttr)]
+    operands := #[input]
+    properties := { nsw := false, nuw := true } }
 
-/-! ## Binary op lowering Template -/
+/-- Describe a binary `arith` operation with both operands and result of type `i<width>`. -/
+def binopDescr (arithOp : Arith) (props : propertiesOf (.arith arithOp))
+    (lhs rhs : OperandRef) (width : Nat) : OpDescr :=
+  { opType := .arith arithOp
+    resultTypes := #[(IntegerType.mk width : TypeAttr)]
+    operands := #[lhs, rhs]
+    properties := props }
 
-abbrev Builder :=
-  (rewriter : PatternRewriter OpCode) →
-  (lhs rhs modulus : ValuePtr) →
-  (ip : InsertPoint) →
-  Option (PatternRewriter OpCode × ValuePtr)
+/-!
+  ## Lowering recipes
 
-set_option warn.sorry false in
-/-- Lower a binary `mod_arith` op `modOp`,
-    using intermediate Type iM given storage type iM, with M = `widen` N,
-    and using Builder `build` to determine the exact `arith` operations to emit -/
-def lowerModArithBinOp (modOp : Mod_Arith) (widen : Nat → Nat) (build : Builder)
-    (rewriter : PatternRewriter OpCode) (op : OperationPtr) : Option (PatternRewriter OpCode) := do
-  -- match op and extract operands:
-  let some (operands, _) := matchOp op rewriter.ctx (.mod_arith modOp) 2
-    | return rewriter
-  let lhs := operands[0]!
-  let rhs := operands[1]!
-  -- type setup
-  let .modArithType modArithType := ((op.getResult 0 : ValuePtr).getType! rewriter.ctx.raw).val
-    | return rewriter
-  let intermediateWidth := widen modArithType.modulus.type.bitwidth
-  let intermediateType  := IntegerType.mk intermediateWidth
-  -- actual lowering:
-  let ip := InsertPoint.before op
-  let (rewriter, a) ← unpackValue rewriter lhs intermediateType ip
-  let (rewriter, b) ← unpackValue rewriter rhs intermediateType ip
-  let (rewriter, q) ← emitArithConstant rewriter modArithType.modulus.value intermediateWidth ip
-  let (rewriter, r) ← build rewriter a b q ip
-  let (rewriter, r) ← emitArithBinOp rewriter .remui () r q ip
-  let (rewriter, r) ← packValue rewriter r modArithType ip
-  let rewriter := rewriter.replaceValue (op.getResult 0) r sorry sorry sorry
-  rewriter.eraseOp op sorry sorry sorry
+  All binary lowerings share a common shape: unpack both operands from `!mod_arith.int<q:iN>`
+  into a wider intermediate type `iM` (so that the intermediate result cannot overflow),
+  compute the operation followed by a final `arith.remui` reduction there, and pack the result
+  back down to `iN` / `!mod_arith.int`.
 
-/-! ## Binary op lowering Patterns -/
+  The recipes assume canonical operands in `[0, q)` and produce canonical results.
+-/
 
-def buildAdd : Builder :=
-  fun rewriter a b _ ip =>
-  emitArithBinOp rewriter .addi { nsw := false, nuw := false } a b ip
+/--
+  Lower `mod_arith.add` with intermediate width `N+1`:
+  `(x + y) % q` cannot overflow `i(N+1)` since `x, y < q < 2^N`.
+-/
+def addRecipe (lhs rhs : ValuePtr) (mt : ModArithType) : List OpDescr :=
+  let n := mt.modulus.type.bitwidth
+  let m := n + 1
+  let storageTy : TypeAttr := (mt.modulus.type : TypeAttr)
+  [ castDescr (.outer lhs) storageTy,           -- 0: lhs as iN
+    extuiDescr (.created 0 0) m,                -- 1: lhs as iM
+    castDescr (.outer rhs) storageTy,           -- 2: rhs as iN
+    extuiDescr (.created 2 0) m,                -- 3: rhs as iM
+    constantDescr mt.modulus.value m,           -- 4: q as iM
+    binopDescr .addi { nsw := false, nuw := false } (.created 1 0) (.created 3 0) m, -- 5: x + y
+    binopDescr .remui () (.created 5 0) (.created 4 0) m, -- 6: (x + y) % q
+    trunciNuwDescr (.created 6 0) n,            -- 7: result as iN
+    castDescr (.created 7 0) (mt : TypeAttr) ]  -- 8: result as !mod_arith.int
 
-def lowerModArithAddOp := lowerModArithBinOp .add (· + 1) buildAdd
+/--
+  Lower `mod_arith.sub` with intermediate width `N+1`: we compute `x - y (mod q)` as
+  `((x + q) - y) % q` to avoid unsigned underflow when `x < y`.
+-/
+def subRecipe (lhs rhs : ValuePtr) (mt : ModArithType) : List OpDescr :=
+  let n := mt.modulus.type.bitwidth
+  let m := n + 1
+  let storageTy : TypeAttr := (mt.modulus.type : TypeAttr)
+  [ castDescr (.outer lhs) storageTy,           -- 0: lhs as iN
+    extuiDescr (.created 0 0) m,                -- 1: lhs as iM
+    castDescr (.outer rhs) storageTy,           -- 2: rhs as iN
+    extuiDescr (.created 2 0) m,                -- 3: rhs as iM
+    constantDescr mt.modulus.value m,           -- 4: q as iM
+    binopDescr .addi { nsw := false, nuw := false } (.created 1 0) (.created 4 0) m, -- 5: x + q
+    binopDescr .subi { nsw := false, nuw := false } (.created 5 0) (.created 3 0) m, -- 6: (x+q) - y
+    binopDescr .remui () (.created 6 0) (.created 4 0) m, -- 7: ((x+q) - y) % q
+    trunciNuwDescr (.created 7 0) n,            -- 8: result as iN
+    castDescr (.created 8 0) (mt : TypeAttr) ]  -- 9: result as !mod_arith.int
 
-def buildMul : Builder :=
-  fun rewriter a b _ ip =>
-  emitArithBinOp rewriter .muli { nsw := false, nuw := false } a b ip
+/--
+  Lower `mod_arith.mul` with intermediate width `2*N`:
+  `x * y` cannot overflow `i(2N)` since `x, y < q < 2^N`.
+-/
+def mulRecipe (lhs rhs : ValuePtr) (mt : ModArithType) : List OpDescr :=
+  let n := mt.modulus.type.bitwidth
+  let m := 2 * n
+  let storageTy : TypeAttr := (mt.modulus.type : TypeAttr)
+  [ castDescr (.outer lhs) storageTy,           -- 0: lhs as iN
+    extuiDescr (.created 0 0) m,                -- 1: lhs as iM
+    castDescr (.outer rhs) storageTy,           -- 2: rhs as iN
+    extuiDescr (.created 2 0) m,                -- 3: rhs as iM
+    constantDescr mt.modulus.value m,           -- 4: q as iM
+    binopDescr .muli { nsw := false, nuw := false } (.created 1 0) (.created 3 0) m, -- 5: x * y
+    binopDescr .remui () (.created 5 0) (.created 4 0) m, -- 6: (x * y) % q
+    trunciNuwDescr (.created 6 0) n,            -- 7: result as iN
+    castDescr (.created 7 0) (mt : TypeAttr) ]  -- 8: result as !mod_arith.int
 
-def lowerModArithMulOp := lowerModArithBinOp .mul (2 * ·) buildMul
+/--
+  Lower `mod_arith.constant` to an `arith.constant` (the verifier ensures the value is
+  already in `[0, q)`).
+-/
+def constantRecipe (value : Int) (mt : ModArithType) : List OpDescr :=
+  [ constantDescr value mt.modulus.type.bitwidth, -- 0: the value as iN
+    castDescr (.created 0 0) (mt : TypeAttr) ]    -- 1: the value as !mod_arith.int
 
-def buildSub : Builder :=
-  fun (rewriter : PatternRewriter OpCode) (a b q : ValuePtr) (ip : InsertPoint) => do
-    -- we compute a - b (mod q) as ((a+q) - b) % q to avoid unsigned underflow when a < b.
-    let (rewriter, aq) ← emitArithBinOp rewriter .addi { nsw := false, nuw := false } a q ip
-    emitArithBinOp rewriter .subi { nsw := false, nuw := false } aq b ip
+/-!
+  ## Lowering patterns
+-/
 
-def lowerModArithSubOp := lowerModArithBinOp .sub (· + 1) buildSub
+/--
+  Lower a binary `mod_arith` operation `modOp` by materializing the operations
+  described by `recipe` and replacing the matched operation's result with the
+  last created operation's result.
+-/
+def lowerBinop (modOp : Mod_Arith)
+    (recipe : ValuePtr → ValuePtr → ModArithType → List OpDescr) :
+    LocalRewritePattern OpCode :=
+  fun ctx op => do
+    -- match op and extract operands:
+    let some (operands, _) := matchOp op ctx.raw (.mod_arith modOp) 2
+      | return (ctx, none)
+    let .modArithType mt := ((op.getResult 0 : ValuePtr).getType! ctx.raw).val
+      | return (ctx, none)
+    -- the lowering is only defined for non-trivial storage types:
+    if mt.modulus.type.bitwidth = 0 then
+      return (ctx, none)
+    -- materialize the recipe:
+    let some (newCtx, newOps) := buildOps ctx (recipe operands[0]! operands[1]! mt)
+      | none
+    let some result := newOps.back? | none
+    return (newCtx, some (newOps, #[(result.getResult 0 : ValuePtr)]))
 
-/-! ## Constant lowering Pattern -/
+/-- Lower `mod_arith.constant` (see `constantRecipe`). -/
+def lowerConstant : LocalRewritePattern OpCode :=
+  fun ctx op => do
+    -- match op and extract the value attribute:
+    let some (_, props) := matchOp op ctx.raw (.mod_arith .constant) 0
+      | return (ctx, none)
+    let .modArithType mt := ((op.getResult 0 : ValuePtr).getType! ctx.raw).val
+      | return (ctx, none)
+    -- materialize the recipe:
+    let some (newCtx, newOps) := buildOps ctx (constantRecipe props.value.value mt)
+      | none
+    let some result := newOps.back? | none
+    return (newCtx, some (newOps, #[(result.getResult 0 : ValuePtr)]))
 
-set_option warn.sorry false in
-/-- Lower `mod_arith.constant` to an `arith.constant` (assumes value is in `[0, q)` already). -/
-def lowerModArithConstant (rewriter : PatternRewriter OpCode) (op : OperationPtr) : Option (PatternRewriter OpCode) := do
-  -- match op and extract attribute:
-  let some (_, props) := matchOp op rewriter.ctx (.mod_arith .constant) 0
-    | return rewriter
-  let c := props.value.value
-  -- type setup
-  let .modArithType modArithType := ((op.getResult 0 : ValuePtr).getType! rewriter.ctx.raw).val
-    | return rewriter
-  let storageType := modArithType.modulus.type
-  -- actual lowering:
-  let ip := InsertPoint.before op
-  let (rewriter, r) ← emitArithConstant rewriter c storageType.bitwidth ip
-  let (rewriter, out) ← castToModArith rewriter (r : ValuePtr) modArithType ip
-  let rewriter := rewriter.replaceValue (op.getResult 0) out sorry sorry sorry
-  rewriter.eraseOp op sorry sorry sorry
+end ModArithToArith
 
 /-! ## Pass implementation -/
+
+def lowerModArithConstant : RewritePattern OpCode :=
+  .fromLocalRewrite ModArithToArith.lowerConstant
+
+def lowerModArithAddOp : RewritePattern OpCode :=
+  .fromLocalRewrite (ModArithToArith.lowerBinop .add ModArithToArith.addRecipe)
+
+def lowerModArithSubOp : RewritePattern OpCode :=
+  .fromLocalRewrite (ModArithToArith.lowerBinop .sub ModArithToArith.subRecipe)
+
+def lowerModArithMulOp : RewritePattern OpCode :=
+  .fromLocalRewrite (ModArithToArith.lowerBinop .mul ModArithToArith.mulRecipe)
 
 def ModArithToArithPass.impl (ctx : WfIRContext OpCode) (op : OperationPtr)
     (_ : op.InBounds ctx.raw) : ExceptT String IO (WfIRContext OpCode) := do
