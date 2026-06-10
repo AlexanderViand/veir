@@ -589,6 +589,43 @@ def ModArith.interpretOp' (opType : Veir.Mod_Arith) (properties : HasDialectOpIn
     if h₂ : bw₂ ≠ bw then none else
     return (#[.int bw (.val (Data.ModArith.mul q (lhs.cast (by omega)) (rhs.cast (by omega))))],
       none)
+  | .mac => do
+    let some resType := resultTypes[0]? | none
+    let .modArithType modArithType := resType.val | none
+    let q := modArithType.modulus.value
+    let bw := modArithType.modulus.type.bitwidth
+    let [.int bw₁ (.val lhs), .int bw₂ (.val rhs), .int bw₃ (.val acc)] := operands.toList | none
+    if h₁ : bw₁ ≠ bw then none else
+    if h₂ : bw₂ ≠ bw then none else
+    if h₃ : bw₃ ≠ bw then none else
+    return (#[.int bw (.val (Data.ModArith.mac q (lhs.cast (by omega)) (rhs.cast (by omega))
+      (acc.cast (by omega))))], none)
+  | .reduce => do
+    let some resType := resultTypes[0]? | none
+    let .modArithType modArithType := resType.val | none
+    let q := modArithType.modulus.value
+    let bw := modArithType.modulus.type.bitwidth
+    let [.int bw₁ (.val input)] := operands.toList | none
+    if h₁ : bw₁ ≠ bw then none else
+    return (#[.int bw (.val (Data.ModArith.reduce q (input.cast (by omega))))], none)
+  | .encapsulate => do
+    /- Identity embedding of an `iN` value into `!mod_arith.int<q : iN>`. The conformance
+     check in `setVar?` dynamically enforces canonicity: encapsulating a value outside
+     the canonical range `[0, q)` fails interpretation. -/
+    let some resType := resultTypes[0]? | none
+    let .modArithType modArithType := resType.val | none
+    let bw := modArithType.modulus.type.bitwidth
+    let [.int bw₁ (.val input)] := operands.toList | none
+    if h₁ : bw₁ ≠ bw then none else
+    return (#[.int bw (.val (input.cast (by omega)))], none)
+  | .extract => do
+    /- Identity projection of the canonical representative to the storage type. -/
+    let some resType := resultTypes[0]? | none
+    let .integerType intType := resType.val | none
+    let bw := intType.bitwidth
+    let [.int bw₁ (.val input)] := operands.toList | none
+    if h₁ : bw₁ ≠ bw then none else
+    return (#[.int bw (.val (input.cast (by omega)))], none)
 
 
 def Llvm.interpretOp' (opType : Veir.Llvm) (properties : HasDialectOpInfo.propertiesOf opType)

@@ -228,11 +228,21 @@ inductive Riscv_Cf where
 | bgeu
 deriving Inhabited, Repr, Hashable, DecidableEq
 
+/-
+We deliberately do NOT mirror HEIR's `mod_arith.barrett_reduce` and `mod_arith.subifge`
+ops: their semantics produce non-canonical `mod_arith` values, which contradicts VEIR's
+canonical-representative invariant (see `Data.ModArith.IsCanonical`). Barrett efficiency
+is provided at the lowering level instead (`--mod-arith-to-arith-barrett`).
+-/
 @[opcodes]
 inductive Mod_Arith where
 | add
 | constant
+| encapsulate
+| extract
+| mac
 | mul
+| reduce
 | sub
 deriving Inhabited, Repr, Hashable, DecidableEq
 

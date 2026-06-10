@@ -144,6 +144,29 @@ def OperationPtr.verifyModArithBinopTypes (op : OperationPtr) (ctx : WfIRContext
   let _ ← operandType.verifyModArithType instrName
   pure ()
 
+/--
+  Check the types of a unary `mod_arith` operation: the operand and the result must
+  have the same well-formed `!mod_arith.int` type.
+-/
+def OperationPtr.verifyModArithUnaryTypes (op : OperationPtr) (ctx : WfIRContext OpCode)
+    (instrName : String) : Except String PUnit := do
+  let operandType := (op.getOperand! ctx.raw 0).getType! ctx.raw
+  op.verifyResultTypeMatches ctx operandType s!"{instrName}: Expected result type to match operand type"
+  let _ ← operandType.verifyModArithType instrName
+  pure ()
+
+/--
+  Check the types of a ternary `mod_arith` operation: all three operands and the result
+  must have the same well-formed `!mod_arith.int` type.
+-/
+def OperationPtr.verifyModArithTernaryTypes (op : OperationPtr) (ctx : WfIRContext OpCode)
+    (instrName : String) : Except String PUnit := do
+  let operandType ← op.verifyOperandTypesMatch ctx 0 1 s!"{instrName}: Expected operands to have the same type"
+  let _ ← op.verifyOperandTypesMatch ctx 0 2 s!"{instrName}: Expected operands to have the same type"
+  op.verifyResultTypeMatches ctx operandType s!"{instrName}: Expected result type to match operand type"
+  let _ ← operandType.verifyModArithType instrName
+  pure ()
+
 def OperationPtr.verifyICmpTypes (op : OperationPtr) (ctx : WfIRContext OpCode)
     (instrName : String) : Except String PUnit := do
   ((op.getOperand! ctx.raw 0).getType! ctx.raw).verifyIntegerType s!"{instrName}: Expected operand 0 to have integer type"
@@ -1024,6 +1047,47 @@ def OperationPtr.verifyLocalInvariants (op : OperationPtr) (ctx : WfIRContext Op
     if value.value < 0 ∨ value.value ≥ modArithType.modulus.value then
       throw "mod_arith.constant: Expected the value to be in the canonical range [0, modulus)"
     pure ()
+  | .mod_arith .encapsulate => do
+    if op.getNumOperands ctx.raw opIn ≠ 1 then
+      throw "Expected 1 operand"
+    if op.getNumResults ctx.raw opIn ≠ 1 then
+      throw "Expected 1 result"
+    if op.getNumRegions ctx.raw opIn ≠ 0 then
+      throw "Expected 0 regions"
+    if op.getNumSuccessors ctx.raw opIn ≠ 0 then
+      throw "Expected 0 successors"
+    let .integerType operandInt := ((op.getOperand! ctx.raw 0).getType! ctx.raw).val
+      | throw "mod_arith.encapsulate: Expected operand 0 to have integer type"
+    let modArithType ← ((op.getResult 0).get! ctx.raw).type.verifyModArithType "mod_arith.encapsulate"
+    if operandInt.bitwidth ≠ modArithType.modulus.type.bitwidth then
+      throw "mod_arith.encapsulate: Expected the operand bitwidth to match the modulus storage bitwidth"
+    pure ()
+  | .mod_arith .extract => do
+    if op.getNumOperands ctx.raw opIn ≠ 1 then
+      throw "Expected 1 operand"
+    if op.getNumResults ctx.raw opIn ≠ 1 then
+      throw "Expected 1 result"
+    if op.getNumRegions ctx.raw opIn ≠ 0 then
+      throw "Expected 0 regions"
+    if op.getNumSuccessors ctx.raw opIn ≠ 0 then
+      throw "Expected 0 successors"
+    let modArithType ← ((op.getOperand! ctx.raw 0).getType! ctx.raw).verifyModArithType "mod_arith.extract"
+    let .integerType resultInt := ((op.getResult 0).get! ctx.raw).type.val
+      | throw "mod_arith.extract: Expected integer result type"
+    if resultInt.bitwidth ≠ modArithType.modulus.type.bitwidth then
+      throw "mod_arith.extract: Expected the result bitwidth to match the modulus storage bitwidth"
+    pure ()
+  | .mod_arith .mac => do
+    if op.getNumOperands ctx.raw opIn ≠ 3 then
+      throw "Expected 3 operands"
+    if op.getNumResults ctx.raw opIn ≠ 1 then
+      throw "Expected 1 result"
+    if op.getNumRegions ctx.raw opIn ≠ 0 then
+      throw "Expected 0 regions"
+    if op.getNumSuccessors ctx.raw opIn ≠ 0 then
+      throw "Expected 0 successors"
+    op.verifyModArithTernaryTypes ctx "mod_arith.mac"
+    pure ()
   | .mod_arith .mul => do
     if op.getNumOperands ctx.raw opIn ≠ 2 then
       throw "Expected 2 operands"
@@ -1034,6 +1098,17 @@ def OperationPtr.verifyLocalInvariants (op : OperationPtr) (ctx : WfIRContext Op
     if op.getNumSuccessors ctx.raw opIn ≠ 0 then
       throw "Expected 0 successors"
     op.verifyModArithBinopTypes ctx "mod_arith.mul"
+    pure ()
+  | .mod_arith .reduce => do
+    if op.getNumOperands ctx.raw opIn ≠ 1 then
+      throw "Expected 1 operand"
+    if op.getNumResults ctx.raw opIn ≠ 1 then
+      throw "Expected 1 result"
+    if op.getNumRegions ctx.raw opIn ≠ 0 then
+      throw "Expected 0 regions"
+    if op.getNumSuccessors ctx.raw opIn ≠ 0 then
+      throw "Expected 0 successors"
+    op.verifyModArithUnaryTypes ctx "mod_arith.reduce"
     pure ()
   | .mod_arith .sub => do
     if op.getNumOperands ctx.raw opIn ≠ 2 then
@@ -2354,6 +2429,24 @@ theorem OperationPtr.Verified.mod_arith_binop {op : OperationPtr} {opInBounds} {
       Except.pure, ite_not] at opVerify
     simp only [TypeAttr.inj, ModArithType.HasValidModulus]
     grind
+
+theorem OperationPtr.Verified.mod_arith_reduce {op : OperationPtr} {opInBounds}
+    (opVerify : op.Verified ctx opInBounds)
+    (opType : op.getOpType! ctx.raw = .mod_arith .reduce) :
+    op.getNumResults! ctx.raw = 1 ∧
+    op.getNumOperands! ctx.raw = 1 ∧
+    op.getNumSuccessors! ctx.raw = 0 ∧
+    op.getNumRegions! ctx.raw = 0 ∧
+    ∃ modArithType : ModArithType,
+      ((op.getResult 0).get! ctx.raw).type = ⟨.modArithType modArithType, (by grind)⟩ ∧
+      ((op.getOperand! ctx.raw 0).getType! ctx.raw) = ⟨.modArithType modArithType, (by grind)⟩ ∧
+      modArithType.HasValidModulus := by
+  simp only [Verified, verifyLocalInvariants, ← getOpType!_eq_getOpType, opType, ne_eq,
+    verifyModArithUnaryTypes, verifyResultTypeMatches,
+    TypeAttr.verifyModArithType, bind, Except.bind, throw, throwThe, MonadExceptOf.throw, pure,
+    Except.pure, ite_not] at opVerify
+  simp only [TypeAttr.inj, ModArithType.HasValidModulus]
+  grind
 
 theorem OperationPtr.Verified.mod_arith_constant {op : OperationPtr} {opInBounds}
     (opVerify : op.Verified ctx opInBounds)

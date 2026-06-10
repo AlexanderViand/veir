@@ -12,7 +12,7 @@ public section
 def Mod_Arith.propertiesOf (op : Mod_Arith) : Type :=
 match op with
 | .constant => ModArithConstantProperties
-| .add | .sub | .mul => Unit
+| .add | .sub | .mul | .mac | .reduce | .encapsulate | .extract => Unit
 
 instance : HasDialectOpInfo Mod_Arith where
   propertiesOf := Mod_Arith.propertiesOf
