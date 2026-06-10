@@ -540,6 +540,11 @@ def Arith.interpretOp' (opType : Veir.Arith) (properties : HasDialectOpInfo.prop
     if h: bw' ≠ bw then none else
     let rhs := rhs.cast (by simpa using h)
     return (#[.int bw (LLVM.Int.select cond lhs rhs)], none)
+  | .cmpi => do
+    let [.int bw lhs, .int bw' rhs] := operands.toList | none
+    if h: bw' ≠ bw then none else
+    let rhs := rhs.cast (by simpa using h)
+    return (#[.int 1 (LLVM.Int.icmp lhs rhs properties.predicate)], none)
   | _ => none
 
 
