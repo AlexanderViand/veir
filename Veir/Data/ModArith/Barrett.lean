@@ -114,6 +114,22 @@ theorem subifge_eq_mod {q t x : Int} (hq : 0 < q) (h0 : 0 ≤ t) (h2 : t < 2 * q
     have h4 : t % q = t := Int.emod_eq_of_lt h0 (by omega)
     omega
 
+/-! ## The Barrett multiplication pipeline at the bitvector level
+
+The planned Barrett-based lowering of `mod_arith.mul` for `!mod_arith.int<q : iN>`
+computes, at a uniform intermediate width `W = 4N` with `k = 2N`:
+
+  p  = zext(x) * zext(y)               -- exact: p < q² < 2^(2N-2)
+  pr = p * r                           -- r = ⌊2^(2N)/q⌋ ≤ 2^(2N), so pr < 2^(4N-2)
+  s  = pr >>> 2N                       -- the Barrett quotient estimate
+  t  = p - s * q                       -- ∈ [0, 2q) by `barrett_core`
+  u  = if q ≤ t then t - q else t      -- subifge: cmpi uge + subi + select
+  result = truncate N u                -- canonical product
+
+The lemmas below (to be proven when the lowering recipe lands) bridge `barrett_core`
+to this bitvector pipeline, in the same style as `Veir.Data.ModArith.Lemmas`.
+-/
+
 end
 
 end Veir.Data.ModArith
