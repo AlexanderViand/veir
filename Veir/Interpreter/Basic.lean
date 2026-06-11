@@ -5,6 +5,7 @@ import Veir.IR.WellFormed
 import Veir.PatternRewriter.Basic
 import Veir.Data.Comb.Basic
 import Veir.Data.LLVM.Int.Basic
+import Veir.Data.ModArith.Basic
 import Veir.Data.RISCV.Reg.Basic
 import Veir.Data.HW.Basic
 import Veir.Data.Casting
@@ -61,7 +62,9 @@ def Conforms (val : RuntimeValue) (ty : TypeAttr) : Prop :=
   | .float bw _, ⟨.floatType floatType, _⟩ => floatType.bitwidth = bw
   | .reg _, ⟨.registerType _, _⟩ => True
   | .addr _, ⟨.llvmPointerType _, _⟩ => True
-  | .int bw _, ⟨.modArithType modArithType, _⟩ => modArithType.modulus.type.bitwidth = bw
+  | .int bw v, ⟨.modArithType modArithType, _⟩ =>
+    modArithType.modulus.type.bitwidth = bw ∧
+      Data.ModArith.IsCanonical modArithType.modulus.value v
   | _, _ => False
 
 instance : Decidable (Conforms val ty) := by
@@ -105,6 +108,21 @@ theorem Conforms.llvmPointerType :
     ∃ val, runtimeValue = .addr val := by
   simp only [Conforms]
   cases runtimeValue <;> grind
+
+@[grind <=]
+theorem Conforms.modArithType {modArithType : ModArithType} :
+    Conforms runtimeValue ⟨.modArithType modArithType, by rfl⟩ →
+    ∃ val, runtimeValue = .int modArithType.modulus.type.bitwidth (.val val) ∧
+      (val.toNat : Int) < modArithType.modulus.value := by
+  simp only [Conforms]
+  cases runtimeValue
+  case int bw val =>
+    simp only [int.injEq]
+    rintro ⟨rfl, hval⟩
+    cases val
+    case val x => exact ⟨x, ⟨rfl, HEq.rfl⟩, hval⟩
+    case poison => exact absurd hval (Data.ModArith.not_isCanonical_poison)
+  all_goals grind
 
 def ArrayConforms (source : Array RuntimeValue) (target : Array TypeAttr) : Prop :=
   source.size = target.size ∧ ∀ (i : Nat) (_ : i < source.size), source[i]!.Conforms target[i]!
