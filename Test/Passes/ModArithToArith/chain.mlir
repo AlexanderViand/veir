@@ -27,7 +27,7 @@
 
 // ... the add produces an i32 result via trunci, which flows directly into the mul's widening
 // (the intermediate !mod_arith.int round-trip cast has been reconciled away) ...
-// CHECK-NEXT:   [[ADD:%.*]] = "arith.trunci"([[SUMR]]) <{"overflowFlags" = 2 : i32}> : (i33) -> i32
+// CHECK-NEXT:   [[ADD:%.*]] = "arith.trunci"([[SUMR]]) <{"overflowFlags" = #arith.overflow<nuw>}> : (i33) -> i32
 // CHECK-NEXT:   [[M0:%.*]] = "arith.extui"([[ADD]]) : (i32) -> i64
 // CHECK-NEXT:   [[C2:%.*]] = "builtin.unrealized_conversion_cast"([[ARG2]]) : (!mod_arith.int<7 : i32>) -> i32
 // CHECK-NEXT:   [[M1:%.*]] = "arith.extui"([[C2]]) : (i32) -> i64
@@ -36,6 +36,6 @@
 // CHECK-NEXT:   [[PRODR:%.*]] = "arith.remui"([[PROD]], [[QMUL]]) : (i64, i64) -> i64
 
 // ... and only the final result is packed back into !mod_arith.int.
-// CHECK-NEXT:   [[MUL:%.*]] = "arith.trunci"([[PRODR]]) <{"overflowFlags" = 2 : i32}> : (i64) -> i32
+// CHECK-NEXT:   [[MUL:%.*]] = "arith.trunci"([[PRODR]]) <{"overflowFlags" = #arith.overflow<nuw>}> : (i64) -> i32
 // CHECK-NEXT:   [[RES:%.*]] = "builtin.unrealized_conversion_cast"([[MUL]]) : (i32) -> !mod_arith.int<7 : i32>
 // CHECK-NEXT:   "func.return"([[RES]]) : (!mod_arith.int<7 : i32>) -> ()
