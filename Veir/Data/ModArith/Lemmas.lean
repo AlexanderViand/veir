@@ -51,6 +51,58 @@ theorem zeroExtend_truncate_eq_self {v : BitVec m} (hv : v.toNat < 2 ^ n) :
   simp only [BitVec.truncate, BitVec.zeroExtend, BitVec.toNat_setWidth]
   rw [Nat.mod_eq_of_lt hv, Nat.mod_eq_of_lt v.isLt]
 
+/-! ## Width side conditions from the modulus bound `q < 2^(n-1)`
+
+The verifier guarantees the modulus satisfies `q < 2^(n-1)`.  The lowering proofs need this bound
+restated against the intermediate widths so that intermediate sums / products cannot wrap.  These
+two helpers package the `push_cast`/`omega` bridging between `Int` and `Nat` powers of two that
+would otherwise be repeated verbatim in every per-operation proof.
+-/
+
+/-- The modulus is canonical at width `n`: `q ≤ 2^n` follows from `q < 2^(n-1)`. -/
+theorem modulus_le_two_pow (hn : 1 ≤ n) (hq : q < 2 ^ (n - 1)) :
+    q ≤ 2 ^ n := by
+  have hle : (2 : Nat) ^ (n - 1) ≤ 2 ^ n := Nat.pow_le_pow_right (by omega) (by omega)
+  have hc : (2 : Int) ^ n = ((2 ^ n : Nat) : Int) := by push_cast; rfl
+  have hc2 : (2 : Int) ^ (n - 1) = ((2 ^ (n - 1) : Nat) : Int) := by push_cast; rfl
+  rw [hc2] at hq; rw [hc]
+  have : ((2 ^ (n - 1) : Nat) : Int) ≤ ((2 ^ n : Nat) : Int) := by exact_mod_cast hle
+  omega
+
+/-- The (add/sub) `i(n+1)` width cannot wrap a doubled modulus: `2 * q ≤ 2^(n+1)`. -/
+theorem two_mul_modulus_le_two_pow_succ (hn : 1 ≤ n) (hq : q < 2 ^ (n - 1)) :
+    2 * q ≤ 2 ^ (n + 1) := by
+  have hnat : (2 : Nat) ^ (n + 1) = 2 ^ (n - 1) * 4 := by
+    rw [show n + 1 = (n - 1) + 2 from by omega, Nat.pow_add]
+  have hc : (2 : Int) ^ (n + 1) = ((2 ^ (n + 1) : Nat) : Int) := by push_cast; rfl
+  have hc2 : (2 : Int) ^ (n - 1) = ((2 ^ (n - 1) : Nat) : Int) := by push_cast; rfl
+  rw [hc, hnat]; push_cast; rw [hc2] at hq
+  have hpos : (1 : Int) ≤ ((2 ^ (n - 1) : Nat) : Int) := by
+    have := Nat.one_le_two_pow (n := n - 1); exact_mod_cast this
+  omega
+
+/--
+The `mul` `i(2n)` width cannot wrap the product of two canonical operands: both `q * q ≤ 2^(2n)`
+(so the product `< q * q` fits) and `q < 2^(2n)` (so the modulus constant materializes exactly).
+-/
+theorem modulus_sq_lt_two_pow_two_mul (hn : 1 ≤ n) (hq0 : 0 ≤ q) (hq : q < 2 ^ (n - 1)) :
+    q * q ≤ 2 ^ (2 * n) ∧ q < 2 ^ (2 * n) := by
+  have hqn : (q.toNat : Int) = q := Int.toNat_of_nonneg hq0
+  have hc2 : (2 : Int) ^ (n - 1) = ((2 ^ (n - 1) : Nat) : Int) := by push_cast; rfl
+  have hcN : (2 : Int) ^ (2 * n) = ((2 ^ (2 * n) : Nat) : Int) := by push_cast; rfl
+  have hqtn : q.toNat < 2 ^ (n - 1) := by
+    have : (q.toNat : Int) < ((2 ^ (n - 1) : Nat) : Int) := by rw [hqn, ← hc2]; exact hq
+    exact_mod_cast this
+  refine ⟨?_, ?_⟩
+  · have h1 : q.toNat * q.toNat ≤ 2 ^ (n - 1) * 2 ^ (n - 1) := Nat.mul_le_mul (by omega) (by omega)
+    have h2 : (2 : Nat) ^ (n - 1) * 2 ^ (n - 1) ≤ 2 ^ (2 * n) := by
+      rw [← Nat.pow_add]; exact Nat.pow_le_pow_right (by omega) (by omega)
+    rw [hcN, ← hqn]; push_cast; exact_mod_cast (Nat.le_trans h1 h2)
+  · have hlt : q.toNat < 2 ^ (2 * n) := by
+      have : (2 : Nat) ^ (n - 1) ≤ 2 ^ (2 * n) := Nat.pow_le_pow_right (by omega) (by omega)
+      omega
+    rw [hcN, ← hqn]; exact_mod_cast hlt
+
 /-! ## `mod_arith.add` -/
 
 /--

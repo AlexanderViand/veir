@@ -606,6 +606,43 @@ theorem _root_.Veir.interpretOp_some_inv {ctx : WfIRContext OpCode} {op : Operat
   subst hty
   exact interpretOp_some_iff.mp h
 
+/--
+Conformance of a single-result operation's output: the produced value array `#[v]` conforms to
+the result-type array as soon as the result types are `#[ty]` and `v` conforms to `ty`.  This is
+the shape of every per-step `RuntimeValue.ArrayConforms` obligation in the lowering proofs below.
+-/
+theorem _root_.Veir.arrayConforms_singleton {v : RuntimeValue} {ty : TypeAttr}
+    {tys : Array TypeAttr} (htys : tys = #[ty]) (hv : v.Conforms ty) :
+    RuntimeValue.ArrayConforms #[v] tys := by
+  subst htys
+  refine ⟨rfl, fun i hi => ?_⟩
+  have : i = 0 := by simpa using hi
+  subst this; simpa using hv
+
+/--
+Operand values of a unary operation: if `op` has the single operand `a` bound to `va` in `vs`,
+then `getOperandValues` returns `#[va]`.  Used to thread per-step operand lookups through the
+sequential interpretation of the lowering recipes.
+-/
+theorem getOperandValues_one {ctx : WfIRContext OpCode} {vs : VariableState ctx}
+    {op : OperationPtr} {a : ValuePtr} {va : RuntimeValue}
+    (ha : op.getOperands! ctx.raw = #[a]) (hva : vs.getVar? a = some va) :
+    vs.getOperandValues op = some #[va] := by
+  unfold VariableState.getOperandValues
+  rw [ha, Array.mapM_eq_mapM_toList]; simp [hva]
+
+/--
+Operand values of a binary operation: if `op` has operands `a, b` bound to `va, vb` in `vs`,
+then `getOperandValues` returns `#[va, vb]`.
+-/
+theorem getOperandValues_two {ctx : WfIRContext OpCode} {vs : VariableState ctx}
+    {op : OperationPtr} {a b : ValuePtr} {va vb : RuntimeValue}
+    (hab : op.getOperands! ctx.raw = #[a, b])
+    (hva : vs.getVar? a = some va) (hvb : vs.getVar? b = some vb) :
+    vs.getOperandValues op = some #[va, vb] := by
+  unfold VariableState.getOperandValues
+  rw [hab, Array.mapM_eq_mapM_toList]; simp [hva, hvb]
+
 /-! ## Semantics preservation -/
 
 theorem lowerConstant_preservesSemantics :
@@ -765,13 +802,8 @@ theorem lowerConstant_preservesSemantics :
   have hConf₀ : RuntimeValue.ArrayConforms
       #[RuntimeValue.int mtv.modulus.type.bitwidth
           (.val (BitVec.ofInt mtv.modulus.type.bitwidth props.value.value))]
-      (op₀.getResultTypes! newCtx.raw) := by
-    rw [hResultTypes₀]
-    refine ⟨by rfl, ?_⟩
-    intro i hi
-    have hi0 : i = 0 := by simpa using hi
-    subst hi0
-    simp [RuntimeValue.Conforms]
+      (op₀.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hResultTypes₀ (by simp [RuntimeValue.Conforms])
   obtain ⟨varState₁, hSet₀, hStep₀⟩ :=
     interpretOp_step (inB := hInB₀) hTy₀ hOpVals₀ hEval₀ hConf₀
   -- Step 2: the cast back to `!mod_arith.int`.
@@ -801,12 +833,7 @@ theorem lowerConstant_preservesSemantics :
       #[RuntimeValue.int mtv.modulus.type.bitwidth
           (.val (BitVec.ofInt mtv.modulus.type.bitwidth props.value.value))]
       (op₁.getResultTypes! newCtx.raw) := by
-    rw [hResultTypes₁]
-    refine ⟨by rfl, ?_⟩
-    intro i hi
-    have hi0 : i = 0 := by simpa using hi
-    subst hi0
-    refine ⟨rfl, ?_⟩
+    refine arrayConforms_singleton hResultTypes₁ ⟨rfl, ?_⟩
     -- canonicity of the constant value
     simp only [Data.ModArith.isCanonical_val]
     have hPowLe : ((2 : Int) ^ (mtv.modulus.type.bitwidth - 1))
@@ -953,18 +980,8 @@ theorem lowerAdd_preservesSemantics :
       p.InBounds c.raw → p.InBounds c'.raw := by
     intro p c c' oT rT ops bo rg pr ip h₁ h₂ h₃ h₄ nO hC hin
     exact (WfRewriter.createOp_operation_inBounds_iff hC p).mpr (Or.inl hin)
-  -- None of the created ops are in bounds of the original context.
-  have hnfc₀ : ¬ op₀.InBounds ctx.raw := hnf₀
+  -- `op₁` is not in bounds of the original context (needed to thread the `rhs` operand past it).
   have hnfc₁ : ¬ op₁.InBounds ctx.raw := fun h => hnf₁ (mono hC₀ h)
-  have hnfc₂ : ¬ op₂.InBounds ctx.raw := fun h => hnf₂ (mono hC₁ (mono hC₀ h))
-  have hnfc₃ : ¬ op₃.InBounds ctx.raw := fun h => hnf₃ (mono hC₂ (mono hC₁ (mono hC₀ h)))
-  have hnfc₄ : ¬ op₄.InBounds ctx.raw := fun h => hnf₄ (mono hC₃ (mono hC₂ (mono hC₁ (mono hC₀ h))))
-  have hnfc₅ : ¬ op₅.InBounds ctx.raw :=
-    fun h => hnf₅ (mono hC₄ (mono hC₃ (mono hC₂ (mono hC₁ (mono hC₀ h)))))
-  have hnfc₆ : ¬ op₆.InBounds ctx.raw :=
-    fun h => hnf₆ (mono hC₅ (mono hC₄ (mono hC₃ (mono hC₂ (mono hC₁ (mono hC₀ h))))))
-  have hnfc₇ : ¬ op₇.InBounds ctx.raw :=
-    fun h => hnf₇ (mono hC₆ (mono hC₅ (mono hC₄ (mono hC₃ (mono hC₂ (mono hC₁ (mono hC₀ h)))))))
   have hInB₀ : op₀.InBounds newCtx.raw :=
     mono hC₈ (mono hC₇ (mono hC₆ (mono hC₅ (mono hC₄ (mono hC₃ (mono hC₂ (mono hC₁ hfresh₀)))))))
   have hInB₁ : op₁.InBounds newCtx.raw :=
@@ -982,85 +999,18 @@ theorem lowerAdd_preservesSemantics :
   have hInB₇ : op₇.InBounds newCtx.raw :=
     mono hC₈ hfresh₇
   have hInB₈ : op₈.InBounds newCtx.raw := hfresh₈
-  -- Pairwise distinctness of the created ops.  `ne i j` says: if `opⱼ` is in bounds of a context
-  -- where `opᵢ` is fresh, then they differ.
+  -- Pairwise distinctness of the created ops.  `ne` says: if `a` is in bounds of a context where
+  -- `b` is freshly created (hence not yet in bounds), then `a ≠ b`.  We only need the distinctness
+  -- facts consumed when threading operand values through `setResultValues?` below; each is built
+  -- by pushing the earlier op's freshness forward (`mono`) to the context where the later op is new.
   have ne : ∀ {a b : OperationPtr} {c : WfIRContext OpCode},
       a.InBounds c.raw → ¬ b.InBounds c.raw → a ≠ b := by
     intro a b c ha hb heq; subst heq; exact hb ha
-  -- Forward in-bounds facts: `opⱼ` is in bounds of the context where `opᵢ` (i > j) is created.
-  have i01 : op₀.InBounds ctx₁.raw := hfresh₀
-  have i02 : op₀.InBounds ctx₂.raw := mono hC₁ i01
-  have i03 : op₀.InBounds ctx₃.raw := mono hC₂ i02
-  have i04 : op₀.InBounds ctx₄.raw := mono hC₃ i03
-  have i05 : op₀.InBounds ctx₅.raw := mono hC₄ i04
-  have i06 : op₀.InBounds ctx₆.raw := mono hC₅ i05
-  have i07 : op₀.InBounds ctx₇.raw := mono hC₆ i06
-  have i08 : op₀.InBounds ctx₈.raw := mono hC₇ i07
-  have i12 : op₁.InBounds ctx₂.raw := hfresh₁
-  have i13 : op₁.InBounds ctx₃.raw := mono hC₂ i12
-  have i14 : op₁.InBounds ctx₄.raw := mono hC₃ i13
-  have i15 : op₁.InBounds ctx₅.raw := mono hC₄ i14
-  have i16 : op₁.InBounds ctx₆.raw := mono hC₅ i15
-  have i17 : op₁.InBounds ctx₇.raw := mono hC₆ i16
-  have i18 : op₁.InBounds ctx₈.raw := mono hC₇ i17
-  have i23 : op₂.InBounds ctx₃.raw := hfresh₂
-  have i24 : op₂.InBounds ctx₄.raw := mono hC₃ i23
-  have i25 : op₂.InBounds ctx₅.raw := mono hC₄ i24
-  have i26 : op₂.InBounds ctx₆.raw := mono hC₅ i25
-  have i27 : op₂.InBounds ctx₇.raw := mono hC₆ i26
-  have i28 : op₂.InBounds ctx₈.raw := mono hC₇ i27
-  have i34 : op₃.InBounds ctx₄.raw := hfresh₃
-  have i35 : op₃.InBounds ctx₅.raw := mono hC₄ i34
-  have i36 : op₃.InBounds ctx₆.raw := mono hC₅ i35
-  have i37 : op₃.InBounds ctx₇.raw := mono hC₆ i36
-  have i38 : op₃.InBounds ctx₈.raw := mono hC₇ i37
-  have i45 : op₄.InBounds ctx₅.raw := hfresh₄
-  have i46 : op₄.InBounds ctx₆.raw := mono hC₅ i45
-  have i47 : op₄.InBounds ctx₇.raw := mono hC₆ i46
-  have i48 : op₄.InBounds ctx₈.raw := mono hC₇ i47
-  have i56 : op₅.InBounds ctx₆.raw := hfresh₅
-  have i57 : op₅.InBounds ctx₇.raw := mono hC₆ i56
-  have i58 : op₅.InBounds ctx₈.raw := mono hC₇ i57
-  have i67 : op₆.InBounds ctx₇.raw := hfresh₆
-  have i68 : op₆.InBounds ctx₈.raw := mono hC₇ i67
-  have i78 : op₇.InBounds ctx₈.raw := hfresh₇
-  -- Distinctness of each (i, j) pair with i < j, via the context where opⱼ is fresh.
-  have d01 : op₀ ≠ op₁ := ne i01 hnf₁
-  have d02 : op₀ ≠ op₂ := ne i02 hnf₂
-  have d03 : op₀ ≠ op₃ := ne i03 hnf₃
-  have d04 : op₀ ≠ op₄ := ne i04 hnf₄
-  have d05 : op₀ ≠ op₅ := ne i05 hnf₅
-  have d06 : op₀ ≠ op₆ := ne i06 hnf₆
-  have d07 : op₀ ≠ op₇ := ne i07 hnf₇
-  have d08 : op₀ ≠ op₈ := ne i08 hnf₈
-  have d12 : op₁ ≠ op₂ := ne i12 hnf₂
-  have d13 : op₁ ≠ op₃ := ne i13 hnf₃
-  have d14 : op₁ ≠ op₄ := ne i14 hnf₄
-  have d15 : op₁ ≠ op₅ := ne i15 hnf₅
-  have d16 : op₁ ≠ op₆ := ne i16 hnf₆
-  have d17 : op₁ ≠ op₇ := ne i17 hnf₇
-  have d18 : op₁ ≠ op₈ := ne i18 hnf₈
-  have d23 : op₂ ≠ op₃ := ne i23 hnf₃
-  have d24 : op₂ ≠ op₄ := ne i24 hnf₄
-  have d25 : op₂ ≠ op₅ := ne i25 hnf₅
-  have d26 : op₂ ≠ op₆ := ne i26 hnf₆
-  have d27 : op₂ ≠ op₇ := ne i27 hnf₇
-  have d28 : op₂ ≠ op₈ := ne i28 hnf₈
-  have d34 : op₃ ≠ op₄ := ne i34 hnf₄
-  have d35 : op₃ ≠ op₅ := ne i35 hnf₅
-  have d36 : op₃ ≠ op₆ := ne i36 hnf₆
-  have d37 : op₃ ≠ op₇ := ne i37 hnf₇
-  have d38 : op₃ ≠ op₈ := ne i38 hnf₈
-  have d45 : op₄ ≠ op₅ := ne i45 hnf₅
-  have d46 : op₄ ≠ op₆ := ne i46 hnf₆
-  have d47 : op₄ ≠ op₇ := ne i47 hnf₇
-  have d48 : op₄ ≠ op₈ := ne i48 hnf₈
-  have d56 : op₅ ≠ op₆ := ne i56 hnf₆
-  have d57 : op₅ ≠ op₇ := ne i57 hnf₇
-  have d58 : op₅ ≠ op₈ := ne i58 hnf₈
-  have d67 : op₆ ≠ op₇ := ne i67 hnf₇
-  have d68 : op₆ ≠ op₈ := ne i68 hnf₈
-  have d78 : op₇ ≠ op₈ := ne i78 hnf₈
+  have d12 : op₁ ≠ op₂ := ne hfresh₁ hnf₂
+  have d13 : op₁ ≠ op₃ := ne (mono hC₂ hfresh₁) hnf₃
+  have d14 : op₁ ≠ op₄ := ne (mono hC₃ (mono hC₂ hfresh₁)) hnf₄
+  have d34 : op₃ ≠ op₄ := ne hfresh₃ hnf₄
+  have d45 : op₄ ≠ op₅ := ne hfresh₄ hnf₅
   -- `WithCreatedOps` chains from each creation context to the final one.
   have w1 : WfIRContext.WithCreatedOps ctx₁ newCtx := buildOps_withCreatedOps hbuild₁
   have w2 : WfIRContext.WithCreatedOps ctx₂ newCtx := buildOps_withCreatedOps hbuild₂
@@ -1376,30 +1326,11 @@ theorem lowerAdd_preservesSemantics :
     | _ => simp [RuntimeValue.isRefinedBy] at href
   -- ## Width side conditions and the pipeline arithmetic core.
   have hN1 : 1 ≤ mtv.modulus.type.bitwidth := by omega
-  have hqm : 2 * mtv.modulus.value ≤ 2 ^ (mtv.modulus.type.bitwidth + 1) := by
-    have hnat : (2:Nat)^(mtv.modulus.type.bitwidth + 1) = 2^(mtv.modulus.type.bitwidth - 1) * 4 := by
-      rw [show mtv.modulus.type.bitwidth + 1 = (mtv.modulus.type.bitwidth - 1) + 2 from by omega,
-        Nat.pow_add]
-    have hcast : (2:Int)^(mtv.modulus.type.bitwidth + 1)
-        = ((2^(mtv.modulus.type.bitwidth + 1) : Nat) : Int) := by push_cast; rfl
-    have hcast2 : (2:Int)^(mtv.modulus.type.bitwidth - 1)
-        = ((2^(mtv.modulus.type.bitwidth - 1) : Nat) : Int) := by push_cast; rfl
-    rw [hcast, hnat]; push_cast; rw [hcast2] at hQwidth
-    have hpos : (1:Int) ≤ ((2^(mtv.modulus.type.bitwidth - 1):Nat):Int) := by
-      have := Nat.one_le_two_pow (n := mtv.modulus.type.bitwidth - 1); exact_mod_cast this
-    omega
+  have hqm : 2 * mtv.modulus.value ≤ 2 ^ (mtv.modulus.type.bitwidth + 1) :=
+    Data.ModArith.two_mul_modulus_le_two_pow_succ hN1 hQwidth
   have hnm : mtv.modulus.type.bitwidth ≤ mtv.modulus.type.bitwidth + 1 := by omega
-  have hQle : mtv.modulus.value ≤ 2 ^ mtv.modulus.type.bitwidth := by
-    have hle : (2:Nat)^(mtv.modulus.type.bitwidth-1) ≤ 2^mtv.modulus.type.bitwidth :=
-      Nat.pow_le_pow_right (by omega) (by omega)
-    have hcast : (2:Int)^mtv.modulus.type.bitwidth = ((2^mtv.modulus.type.bitwidth:Nat):Int) := by
-      push_cast; rfl
-    have hcast2 : (2:Int)^(mtv.modulus.type.bitwidth-1)
-        = ((2^(mtv.modulus.type.bitwidth-1):Nat):Int) := by push_cast; rfl
-    rw [hcast2] at hQwidth; rw [hcast]
-    have : ((2^(mtv.modulus.type.bitwidth-1):Nat):Int) ≤ ((2^mtv.modulus.type.bitwidth:Nat):Int) := by
-      exact_mod_cast hle
-    omega
+  have hQle : mtv.modulus.value ≤ 2 ^ mtv.modulus.type.bitwidth :=
+    Data.ModArith.modulus_le_two_pow hN1 hQwidth
   -- The pipeline result and its canonicity.
   have hPipeEq : ((x.zeroExtend (mtv.modulus.type.bitwidth + 1)
         + y.zeroExtend (mtv.modulus.type.bitwidth + 1))
@@ -1415,9 +1346,8 @@ theorem lowerAdd_preservesSemantics :
   -- Notation for the intermediate `BitVec`s flowing through the pipeline.
   -- Step op₀: cast `lhs : iN`.  Value: `.int N (.val x)`.
   have hOpVals₀ : state'.variables.getOperandValues op₀
-      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₀, Array.mapM_eq_mapM_toList]; simp [hTLhs]
+      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] :=
+      getOperandValues_one hOperands₀ hTLhs
   have hEval₀ : interpretOp' (.builtin .unrealized_conversion_cast)
       (op₀.getProperties! newCtx.raw (.builtin .unrealized_conversion_cast))
       (op₀.getResultTypes! newCtx.raw)
@@ -1426,10 +1356,8 @@ theorem lowerAdd_preservesSemantics :
       = some (.ok (#[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)], state'.memory, none)) := by
     rw [hRT₀]; simp [interpretOp', Data.LLVM.Int.cast, pure]
   have hConf₀ : RuntimeValue.ArrayConforms
-      #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] (op₀.getResultTypes! newCtx.raw) := by
-    rw [hRT₀]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] (op₀.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₀ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₁, hSet₀, hStep₀⟩ := interpretOp_step (inB := hInB₀) hTy₀ hOpVals₀ hEval₀ hConf₀
   -- Lookups in `vs₁`.
   have hv₁_0 : vs₁.getVar? (op₀.getResult 0 : ValuePtr)
@@ -1439,9 +1367,8 @@ theorem lowerAdd_preservesSemantics :
     rw [getVar?_setResultValues?_outer hrhsIn hnf₀ hSet₀]; exact hTRhs
   -- Step op₁: `extui` of `x` to width `M = N + 1`.  Value: `.int M (.val (x.zeroExtend M))`.
   have hOpVals₁ : (InterpreterState.mk vs₁ state'.memory).variables.getOperandValues op₁
-      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₁, Array.mapM_eq_mapM_toList]; simp [hv₁_0]
+      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] :=
+      getOperandValues_one hOperands₁ hv₁_0
   have hEval₁ : interpretOp' (.arith .extui) (op₁.getProperties! newCtx.raw (.arith .extui))
       (op₁.getResultTypes! newCtx.raw)
       #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)]
@@ -1454,18 +1381,15 @@ theorem lowerAdd_preservesSemantics :
   have hConf₁ : RuntimeValue.ArrayConforms
       #[RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
           (.val (x.zeroExtend (mtv.modulus.type.bitwidth + 1)))]
-      (op₁.getResultTypes! newCtx.raw) := by
-    rw [hRT₁]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₁.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₁ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₂, hSet₁, hStep₁⟩ := interpretOp_step (inB := hInB₁) hTy₁ hOpVals₁ hEval₁ hConf₁
   -- Step op₂: cast `rhs : iN`.  Value: `.int N (.val y)`.
   have hv₂_rhs : vs₂.getVar? operands[1]! = some (.int mtv.modulus.type.bitwidth (.val y)) := by
     rw [getVar?_setResultValues?_outer hrhsIn hnfc₁ hSet₁]; exact hv₁_rhs
   have hOpVals₂ : (InterpreterState.mk vs₂ state'.memory).variables.getOperandValues op₂
-      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₂, Array.mapM_eq_mapM_toList]; simp [hv₂_rhs]
+      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] :=
+      getOperandValues_one hOperands₂ hv₂_rhs
   have hEval₂ : interpretOp' (.builtin .unrealized_conversion_cast)
       (op₂.getProperties! newCtx.raw (.builtin .unrealized_conversion_cast))
       (op₂.getResultTypes! newCtx.raw)
@@ -1474,19 +1398,16 @@ theorem lowerAdd_preservesSemantics :
       = some (.ok (#[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)], state'.memory, none)) := by
     rw [hRT₂]; simp [interpretOp', Data.LLVM.Int.cast, pure]
   have hConf₂ : RuntimeValue.ArrayConforms
-      #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] (op₂.getResultTypes! newCtx.raw) := by
-    rw [hRT₂]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] (op₂.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₂ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₃, hSet₂, hStep₂⟩ := interpretOp_step (inB := hInB₂) hTy₂ hOpVals₂ hEval₂ hConf₂
   -- Step op₃: `extui` of `y` to width `M`.
   have hv₃_2 : vs₃.getVar? (op₂.getResult 0 : ValuePtr)
       = some (RuntimeValue.int mtv.modulus.type.bitwidth (.val y)) := by
     rw [VariableState.getVar?_setResultValues? hSet₂]; simp [hNumRes₂]
   have hOpVals₃ : (InterpreterState.mk vs₃ state'.memory).variables.getOperandValues op₃
-      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₃, Array.mapM_eq_mapM_toList]; simp [hv₃_2]
+      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] :=
+      getOperandValues_one hOperands₃ hv₃_2
   have hEval₃ : interpretOp' (.arith .extui) (op₃.getProperties! newCtx.raw (.arith .extui))
       (op₃.getResultTypes! newCtx.raw)
       #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)]
@@ -1499,10 +1420,8 @@ theorem lowerAdd_preservesSemantics :
   have hConf₃ : RuntimeValue.ArrayConforms
       #[RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
           (.val (y.zeroExtend (mtv.modulus.type.bitwidth + 1)))]
-      (op₃.getResultTypes! newCtx.raw) := by
-    rw [hRT₃]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₃.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₃ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₄, hSet₃, hStep₃⟩ := interpretOp_step (inB := hInB₃) hTy₃ hOpVals₃ hEval₃ hConf₃
   -- Step op₄: the modulus constant `q : iM`.
   have hOpVals₄ : (InterpreterState.mk vs₄ state'.memory).variables.getOperandValues op₄ = some #[] := by
@@ -1517,10 +1436,8 @@ theorem lowerAdd_preservesSemantics :
   have hConf₄ : RuntimeValue.ArrayConforms
       #[RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
           (.val (BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value))]
-      (op₄.getResultTypes! newCtx.raw) := by
-    rw [hRT₄]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₄.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₄ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₅, hSet₄, hStep₄⟩ := interpretOp_step (inB := hInB₄) hTy₄ hOpVals₄ hEval₄ hConf₄
   -- Step op₅: `addi` of the two extended operands.
   have hv₂_1 : vs₂.getVar? (op₁.getResult 0 : ValuePtr)
@@ -1544,9 +1461,8 @@ theorem lowerAdd_preservesSemantics :
       = some #[RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
             (.val (x.zeroExtend (mtv.modulus.type.bitwidth + 1))),
           RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
-            (.val (y.zeroExtend (mtv.modulus.type.bitwidth + 1)))] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₅, Array.mapM_eq_mapM_toList]; simp [hv₅_1, hv₅_3]
+            (.val (y.zeroExtend (mtv.modulus.type.bitwidth + 1)))] :=
+      getOperandValues_two hOperands₅ hv₅_1 hv₅_3
   have hEval₅ : interpretOp' (.arith .addi) (op₅.getProperties! newCtx.raw (.arith .addi))
       (op₅.getResultTypes! newCtx.raw)
       #[RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
@@ -1563,10 +1479,8 @@ theorem lowerAdd_preservesSemantics :
       #[RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
           (.val (x.zeroExtend (mtv.modulus.type.bitwidth + 1)
             + y.zeroExtend (mtv.modulus.type.bitwidth + 1)))]
-      (op₅.getResultTypes! newCtx.raw) := by
-    rw [hRT₅]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₅.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₅ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₆, hSet₅, hStep₅⟩ := interpretOp_step (inB := hInB₅) hTy₅ hOpVals₅ hEval₅ hConf₅
   -- Step op₆: `remui` reducing modulo `q`.
   have hv₅_4 : vs₅.getVar? (op₄.getResult 0 : ValuePtr)
@@ -1587,9 +1501,8 @@ theorem lowerAdd_preservesSemantics :
             (.val (x.zeroExtend (mtv.modulus.type.bitwidth + 1)
               + y.zeroExtend (mtv.modulus.type.bitwidth + 1))),
           RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
-            (.val (BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value))] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₆, Array.mapM_eq_mapM_toList]; simp [hv₆_5, hv₆_4]
+            (.val (BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value))] :=
+      getOperandValues_two hOperands₆ hv₆_5 hv₆_4
   have hEval₆ : interpretOp' (.arith .remui) (op₆.getProperties! newCtx.raw (.arith .remui))
       (op₆.getResultTypes! newCtx.raw)
       #[RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
@@ -1616,10 +1529,8 @@ theorem lowerAdd_preservesSemantics :
           (.val ((x.zeroExtend (mtv.modulus.type.bitwidth + 1)
             + y.zeroExtend (mtv.modulus.type.bitwidth + 1))
             % BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value))]
-      (op₆.getResultTypes! newCtx.raw) := by
-    rw [hRT₆]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₆.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₆ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₇, hSet₆, hStep₆⟩ := interpretOp_step (inB := hInB₆) hTy₆ hOpVals₆ hEval₆ hConf₆
   -- Step op₇: `trunci` (nuw) back to width `N`.
   have hv₇_6 : vs₇.getVar? (op₆.getResult 0 : ValuePtr)
@@ -1632,9 +1543,8 @@ theorem lowerAdd_preservesSemantics :
       = some #[RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
           (.val ((x.zeroExtend (mtv.modulus.type.bitwidth + 1)
             + y.zeroExtend (mtv.modulus.type.bitwidth + 1))
-            % BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value))] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₇, Array.mapM_eq_mapM_toList]; simp [hv₇_6]
+            % BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value))] :=
+      getOperandValues_one hOperands₇ hv₇_6
   -- No-poison side condition for the `nuw` truncation, from canonicity.
   have hNoPoison : (((x.zeroExtend (mtv.modulus.type.bitwidth + 1)
         + y.zeroExtend (mtv.modulus.type.bitwidth + 1))
@@ -1670,10 +1580,8 @@ theorem lowerAdd_preservesSemantics :
             + y.zeroExtend (mtv.modulus.type.bitwidth + 1))
             % BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value).truncate
             mtv.modulus.type.bitwidth))]
-      (op₇.getResultTypes! newCtx.raw) := by
-    rw [hRT₇]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₇.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₇ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₈, hSet₇, hStep₇⟩ := interpretOp_step (inB := hInB₇) hTy₇ hOpVals₇ hEval₇ hConf₇
   -- Step op₈: cast the result back to `!mod_arith.int`.
   have hv₈_7 : vs₈.getVar? (op₇.getResult 0 : ValuePtr)
@@ -1688,9 +1596,8 @@ theorem lowerAdd_preservesSemantics :
           (.val (((x.zeroExtend (mtv.modulus.type.bitwidth + 1)
             + y.zeroExtend (mtv.modulus.type.bitwidth + 1))
             % BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value).truncate
-            mtv.modulus.type.bitwidth))] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₈, Array.mapM_eq_mapM_toList]; simp [hv₈_7]
+            mtv.modulus.type.bitwidth))] :=
+      getOperandValues_one hOperands₈ hv₈_7
   have hEval₈ : interpretOp' (.builtin .unrealized_conversion_cast)
       (op₈.getProperties! newCtx.raw (.builtin .unrealized_conversion_cast))
       (op₈.getResultTypes! newCtx.raw)
@@ -1706,13 +1613,9 @@ theorem lowerAdd_preservesSemantics :
     simp [interpretOp', Data.LLVM.Int.cast, pure]
   have hConf₈ : RuntimeValue.ArrayConforms
       #[RuntimeValue.int mtv.modulus.type.bitwidth (.val (Data.ModArith.add mtv.modulus.value x y))]
-      (op₈.getResultTypes! newCtx.raw) := by
-    rw [hRT₈]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this
-    refine ⟨rfl, ?_⟩
-    simp only [Data.ModArith.isCanonical_val]
-    exact Data.ModArith.isCanonical_add hQpos hQle
+      (op₈.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₈ ⟨rfl, by
+      simp only [Data.ModArith.isCanonical_val]; exact Data.ModArith.isCanonical_add hQpos hQle⟩
   obtain ⟨vs₉, hSet₈, hStep₈⟩ := interpretOp_step (inB := hInB₈) hTy₈ hOpVals₈ hEval₈ hConf₈
   -- ## Assemble the nine steps into the full target interpretation.
   refine ⟨⟨vs₉, state'.memory⟩, ?_, ?_, ?_⟩
@@ -1842,19 +1745,9 @@ theorem lowerSub_preservesSemantics :
       p.InBounds c.raw → p.InBounds c'.raw := by
     intro p c c' oT rT ops bo rg pr ip h₁ h₂ h₃ h₄ nO hC hin
     exact (WfRewriter.createOp_operation_inBounds_iff hC p).mpr (Or.inl hin)
+  -- `op₀`/`op₁` are not in bounds of the original context (needed to thread `rhs` past them).
   have hnfc₀ : ¬ op₀.InBounds ctx.raw := hnf₀
   have hnfc₁ : ¬ op₁.InBounds ctx.raw := fun h => hnf₁ (mono hC₀ h)
-  have hnfc₂ : ¬ op₂.InBounds ctx.raw := fun h => hnf₂ (mono hC₁ (mono hC₀ h))
-  have hnfc₃ : ¬ op₃.InBounds ctx.raw := fun h => hnf₃ (mono hC₂ (mono hC₁ (mono hC₀ h)))
-  have hnfc₄ : ¬ op₄.InBounds ctx.raw := fun h => hnf₄ (mono hC₃ (mono hC₂ (mono hC₁ (mono hC₀ h))))
-  have hnfc₅ : ¬ op₅.InBounds ctx.raw :=
-    fun h => hnf₅ (mono hC₄ (mono hC₃ (mono hC₂ (mono hC₁ (mono hC₀ h)))))
-  have hnfc₆ : ¬ op₆.InBounds ctx.raw :=
-    fun h => hnf₆ (mono hC₅ (mono hC₄ (mono hC₃ (mono hC₂ (mono hC₁ (mono hC₀ h))))))
-  have hnfc₇ : ¬ op₇.InBounds ctx.raw :=
-    fun h => hnf₇ (mono hC₆ (mono hC₅ (mono hC₄ (mono hC₃ (mono hC₂ (mono hC₁ (mono hC₀ h)))))))
-  have hnfc₈ : ¬ op₈.InBounds ctx.raw :=
-    fun h => hnf₈ (mono hC₇ (mono hC₆ (mono hC₅ (mono hC₄ (mono hC₃ (mono hC₂ (mono hC₁ (mono hC₀ h))))))))
   have hInB₀ : op₀.InBounds newCtx.raw :=
     mono hC₉ (mono hC₈ (mono hC₇ (mono hC₆ (mono hC₅ (mono hC₄ (mono hC₃ (mono hC₂ (mono hC₁ hfresh₀))))))))
   have hInB₁ : op₁.InBounds newCtx.raw :=
@@ -1871,99 +1764,20 @@ theorem lowerSub_preservesSemantics :
   have hInB₇ : op₇.InBounds newCtx.raw := mono hC₉ (mono hC₈ hfresh₇)
   have hInB₈ : op₈.InBounds newCtx.raw := mono hC₉ hfresh₈
   have hInB₉ : op₉.InBounds newCtx.raw := hfresh₉
+  -- Pairwise distinctness of the created ops.  `ne` says: if `a` is in bounds of a context where
+  -- `b` is freshly created (hence not yet in bounds), then `a ≠ b`.  We only need the distinctness
+  -- facts consumed when threading operand values through `setResultValues?` below; each is built
+  -- by pushing the earlier op's freshness forward (`mono`) to the context where the later op is new.
   have ne : ∀ {a b : OperationPtr} {c : WfIRContext OpCode},
       a.InBounds c.raw → ¬ b.InBounds c.raw → a ≠ b := by
     intro a b c ha hb heq; subst heq; exact hb ha
-  have i01 : op₀.InBounds ctx₁.raw := hfresh₀
-  have i02 : op₀.InBounds ctx₂.raw := mono hC₁ i01
-  have i03 : op₀.InBounds ctx₃.raw := mono hC₂ i02
-  have i04 : op₀.InBounds ctx₄.raw := mono hC₃ i03
-  have i05 : op₀.InBounds ctx₅.raw := mono hC₄ i04
-  have i06 : op₀.InBounds ctx₆.raw := mono hC₅ i05
-  have i07 : op₀.InBounds ctx₇.raw := mono hC₆ i06
-  have i08 : op₀.InBounds ctx₈.raw := mono hC₇ i07
-  have i09 : op₀.InBounds ctx₉.raw := mono hC₈ i08
-  have i12 : op₁.InBounds ctx₂.raw := hfresh₁
-  have i13 : op₁.InBounds ctx₃.raw := mono hC₂ i12
-  have i14 : op₁.InBounds ctx₄.raw := mono hC₃ i13
-  have i15 : op₁.InBounds ctx₅.raw := mono hC₄ i14
-  have i16 : op₁.InBounds ctx₆.raw := mono hC₅ i15
-  have i17 : op₁.InBounds ctx₇.raw := mono hC₆ i16
-  have i18 : op₁.InBounds ctx₈.raw := mono hC₇ i17
-  have i19 : op₁.InBounds ctx₉.raw := mono hC₈ i18
-  have i23 : op₂.InBounds ctx₃.raw := hfresh₂
-  have i24 : op₂.InBounds ctx₄.raw := mono hC₃ i23
-  have i25 : op₂.InBounds ctx₅.raw := mono hC₄ i24
-  have i26 : op₂.InBounds ctx₆.raw := mono hC₅ i25
-  have i27 : op₂.InBounds ctx₇.raw := mono hC₆ i26
-  have i28 : op₂.InBounds ctx₈.raw := mono hC₇ i27
-  have i29 : op₂.InBounds ctx₉.raw := mono hC₈ i28
-  have i34 : op₃.InBounds ctx₄.raw := hfresh₃
-  have i35 : op₃.InBounds ctx₅.raw := mono hC₄ i34
-  have i36 : op₃.InBounds ctx₆.raw := mono hC₅ i35
-  have i37 : op₃.InBounds ctx₇.raw := mono hC₆ i36
-  have i38 : op₃.InBounds ctx₈.raw := mono hC₇ i37
-  have i39 : op₃.InBounds ctx₉.raw := mono hC₈ i38
-  have i45 : op₄.InBounds ctx₅.raw := hfresh₄
-  have i46 : op₄.InBounds ctx₆.raw := mono hC₅ i45
-  have i47 : op₄.InBounds ctx₇.raw := mono hC₆ i46
-  have i48 : op₄.InBounds ctx₈.raw := mono hC₇ i47
-  have i49 : op₄.InBounds ctx₉.raw := mono hC₈ i48
-  have i56 : op₅.InBounds ctx₆.raw := hfresh₅
-  have i57 : op₅.InBounds ctx₇.raw := mono hC₆ i56
-  have i58 : op₅.InBounds ctx₈.raw := mono hC₇ i57
-  have i59 : op₅.InBounds ctx₉.raw := mono hC₈ i58
-  have i67 : op₆.InBounds ctx₇.raw := hfresh₆
-  have i68 : op₆.InBounds ctx₈.raw := mono hC₇ i67
-  have i69 : op₆.InBounds ctx₉.raw := mono hC₈ i68
-  have i78 : op₇.InBounds ctx₈.raw := hfresh₇
-  have i79 : op₇.InBounds ctx₉.raw := mono hC₈ i78
-  have i89 : op₈.InBounds ctx₉.raw := hfresh₈
-  have d01 : op₀ ≠ op₁ := ne i01 hnf₁
-  have d02 : op₀ ≠ op₂ := ne i02 hnf₂
-  have d03 : op₀ ≠ op₃ := ne i03 hnf₃
-  have d04 : op₀ ≠ op₄ := ne i04 hnf₄
-  have d05 : op₀ ≠ op₅ := ne i05 hnf₅
-  have d06 : op₀ ≠ op₆ := ne i06 hnf₆
-  have d07 : op₀ ≠ op₇ := ne i07 hnf₇
-  have d08 : op₀ ≠ op₈ := ne i08 hnf₈
-  have d09 : op₀ ≠ op₉ := ne i09 hnf₉
-  have d12 : op₁ ≠ op₂ := ne i12 hnf₂
-  have d13 : op₁ ≠ op₃ := ne i13 hnf₃
-  have d14 : op₁ ≠ op₄ := ne i14 hnf₄
-  have d15 : op₁ ≠ op₅ := ne i15 hnf₅
-  have d16 : op₁ ≠ op₆ := ne i16 hnf₆
-  have d17 : op₁ ≠ op₇ := ne i17 hnf₇
-  have d18 : op₁ ≠ op₈ := ne i18 hnf₈
-  have d19 : op₁ ≠ op₉ := ne i19 hnf₉
-  have d23 : op₂ ≠ op₃ := ne i23 hnf₃
-  have d24 : op₂ ≠ op₄ := ne i24 hnf₄
-  have d25 : op₂ ≠ op₅ := ne i25 hnf₅
-  have d26 : op₂ ≠ op₆ := ne i26 hnf₆
-  have d27 : op₂ ≠ op₇ := ne i27 hnf₇
-  have d28 : op₂ ≠ op₈ := ne i28 hnf₈
-  have d29 : op₂ ≠ op₉ := ne i29 hnf₉
-  have d34 : op₃ ≠ op₄ := ne i34 hnf₄
-  have d35 : op₃ ≠ op₅ := ne i35 hnf₅
-  have d36 : op₃ ≠ op₆ := ne i36 hnf₆
-  have d37 : op₃ ≠ op₇ := ne i37 hnf₇
-  have d38 : op₃ ≠ op₈ := ne i38 hnf₈
-  have d39 : op₃ ≠ op₉ := ne i39 hnf₉
-  have d45 : op₄ ≠ op₅ := ne i45 hnf₅
-  have d46 : op₄ ≠ op₆ := ne i46 hnf₆
-  have d47 : op₄ ≠ op₇ := ne i47 hnf₇
-  have d48 : op₄ ≠ op₈ := ne i48 hnf₈
-  have d49 : op₄ ≠ op₉ := ne i49 hnf₉
-  have d56 : op₅ ≠ op₆ := ne i56 hnf₆
-  have d57 : op₅ ≠ op₇ := ne i57 hnf₇
-  have d58 : op₅ ≠ op₈ := ne i58 hnf₈
-  have d59 : op₅ ≠ op₉ := ne i59 hnf₉
-  have d67 : op₆ ≠ op₇ := ne i67 hnf₇
-  have d68 : op₆ ≠ op₈ := ne i68 hnf₈
-  have d69 : op₆ ≠ op₉ := ne i69 hnf₉
-  have d78 : op₇ ≠ op₈ := ne i78 hnf₈
-  have d79 : op₇ ≠ op₉ := ne i79 hnf₉
-  have d89 : op₈ ≠ op₉ := ne i89 hnf₉
+  have d12 : op₁ ≠ op₂ := ne hfresh₁ hnf₂
+  have d13 : op₁ ≠ op₃ := ne (mono hC₂ hfresh₁) hnf₃
+  have d14 : op₁ ≠ op₄ := ne (mono hC₃ (mono hC₂ hfresh₁)) hnf₄
+  have d34 : op₃ ≠ op₄ := ne hfresh₃ hnf₄
+  have d35 : op₃ ≠ op₅ := ne (mono hC₄ hfresh₃) hnf₅
+  have d45 : op₄ ≠ op₅ := ne hfresh₄ hnf₅
+  have d46 : op₄ ≠ op₆ := ne (mono hC₅ hfresh₄) hnf₆
   have w1 : WfIRContext.WithCreatedOps ctx₁ newCtx := buildOps_withCreatedOps hbuild₁
   have w2 : WfIRContext.WithCreatedOps ctx₂ newCtx := buildOps_withCreatedOps hbuild₂
   have w3 : WfIRContext.WithCreatedOps ctx₃ newCtx := buildOps_withCreatedOps hbuild₃
@@ -2214,30 +2028,11 @@ theorem lowerSub_preservesSemantics :
       | val tval => simp [Data.LLVM.Int.cast, isRefinedBy] at href; rw [href]
     | _ => simp [RuntimeValue.isRefinedBy] at href
   have hN1 : 1 ≤ mtv.modulus.type.bitwidth := by omega
-  have hqm : 2 * mtv.modulus.value ≤ 2 ^ (mtv.modulus.type.bitwidth + 1) := by
-    have hnat : (2:Nat)^(mtv.modulus.type.bitwidth + 1) = 2^(mtv.modulus.type.bitwidth - 1) * 4 := by
-      rw [show mtv.modulus.type.bitwidth + 1 = (mtv.modulus.type.bitwidth - 1) + 2 from by omega,
-        Nat.pow_add]
-    have hcast : (2:Int)^(mtv.modulus.type.bitwidth + 1)
-        = ((2^(mtv.modulus.type.bitwidth + 1) : Nat) : Int) := by push_cast; rfl
-    have hcast2 : (2:Int)^(mtv.modulus.type.bitwidth - 1)
-        = ((2^(mtv.modulus.type.bitwidth - 1) : Nat) : Int) := by push_cast; rfl
-    rw [hcast, hnat]; push_cast; rw [hcast2] at hQwidth
-    have hpos : (1:Int) ≤ ((2^(mtv.modulus.type.bitwidth - 1):Nat):Int) := by
-      have := Nat.one_le_two_pow (n := mtv.modulus.type.bitwidth - 1); exact_mod_cast this
-    omega
+  have hqm : 2 * mtv.modulus.value ≤ 2 ^ (mtv.modulus.type.bitwidth + 1) :=
+    Data.ModArith.two_mul_modulus_le_two_pow_succ hN1 hQwidth
   have hnm : mtv.modulus.type.bitwidth ≤ mtv.modulus.type.bitwidth + 1 := by omega
-  have hQle : mtv.modulus.value ≤ 2 ^ mtv.modulus.type.bitwidth := by
-    have hle : (2:Nat)^(mtv.modulus.type.bitwidth-1) ≤ 2^mtv.modulus.type.bitwidth :=
-      Nat.pow_le_pow_right (by omega) (by omega)
-    have hcast : (2:Int)^mtv.modulus.type.bitwidth = ((2^mtv.modulus.type.bitwidth:Nat):Int) := by
-      push_cast; rfl
-    have hcast2 : (2:Int)^(mtv.modulus.type.bitwidth-1)
-        = ((2^(mtv.modulus.type.bitwidth-1):Nat):Int) := by push_cast; rfl
-    rw [hcast2] at hQwidth; rw [hcast]
-    have : ((2^(mtv.modulus.type.bitwidth-1):Nat):Int) ≤ ((2^mtv.modulus.type.bitwidth:Nat):Int) := by
-      exact_mod_cast hle
-    omega
+  have hQle : mtv.modulus.value ≤ 2 ^ mtv.modulus.type.bitwidth :=
+    Data.ModArith.modulus_le_two_pow hN1 hQwidth
   have hPipeEq : ((x.zeroExtend (mtv.modulus.type.bitwidth + 1)
         + BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value
         - y.zeroExtend (mtv.modulus.type.bitwidth + 1))
@@ -2252,9 +2047,8 @@ theorem lowerSub_preservesSemantics :
     Data.ModArith.toNat_subPipeline_lt hQpos hqm hnm hxlt hylt
   -- Step op₀: cast `lhs : iN`.
   have hOpVals₀ : state'.variables.getOperandValues op₀
-      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₀, Array.mapM_eq_mapM_toList]; simp [hTLhs]
+      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] :=
+      getOperandValues_one hOperands₀ hTLhs
   have hEval₀ : interpretOp' (.builtin .unrealized_conversion_cast)
       (op₀.getProperties! newCtx.raw (.builtin .unrealized_conversion_cast))
       (op₀.getResultTypes! newCtx.raw) #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)]
@@ -2262,10 +2056,8 @@ theorem lowerSub_preservesSemantics :
       = some (.ok (#[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)], state'.memory, none)) := by
     rw [hRT₀]; simp [interpretOp', Data.LLVM.Int.cast, pure]
   have hConf₀ : RuntimeValue.ArrayConforms
-      #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] (op₀.getResultTypes! newCtx.raw) := by
-    rw [hRT₀]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] (op₀.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₀ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₁, hSet₀, hStep₀⟩ := interpretOp_step (inB := hInB₀) hTy₀ hOpVals₀ hEval₀ hConf₀
   have hv₁_0 : vs₁.getVar? (op₀.getResult 0 : ValuePtr)
       = some (RuntimeValue.int mtv.modulus.type.bitwidth (.val x)) := by
@@ -2274,9 +2066,8 @@ theorem lowerSub_preservesSemantics :
     rw [getVar?_setResultValues?_outer hrhsIn hnfc₀ hSet₀]; exact hTRhs
   -- Step op₁: `extui` of `x` to width `M`.
   have hOpVals₁ : (InterpreterState.mk vs₁ state'.memory).variables.getOperandValues op₁
-      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₁, Array.mapM_eq_mapM_toList]; simp [hv₁_0]
+      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] :=
+      getOperandValues_one hOperands₁ hv₁_0
   have hEval₁ : interpretOp' (.arith .extui) (op₁.getProperties! newCtx.raw (.arith .extui))
       (op₁.getResultTypes! newCtx.raw) #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)]
       (op₁.getSuccessors! newCtx.raw) state'.memory
@@ -2287,18 +2078,15 @@ theorem lowerSub_preservesSemantics :
       dif_neg (show ¬ (mtv.modulus.type.bitwidth + 1 ≤ mtv.modulus.type.bitwidth) from by omega)]
   have hConf₁ : RuntimeValue.ArrayConforms
       #[RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
-          (.val (x.zeroExtend (mtv.modulus.type.bitwidth + 1)))] (op₁.getResultTypes! newCtx.raw) := by
-    rw [hRT₁]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+          (.val (x.zeroExtend (mtv.modulus.type.bitwidth + 1)))] (op₁.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₁ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₂, hSet₁, hStep₁⟩ := interpretOp_step (inB := hInB₁) hTy₁ hOpVals₁ hEval₁ hConf₁
   -- Step op₂: cast `rhs : iN`.
   have hv₂_rhs : vs₂.getVar? operands[1]! = some (.int mtv.modulus.type.bitwidth (.val y)) := by
     rw [getVar?_setResultValues?_outer hrhsIn hnfc₁ hSet₁]; exact hv₁_rhs
   have hOpVals₂ : (InterpreterState.mk vs₂ state'.memory).variables.getOperandValues op₂
-      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₂, Array.mapM_eq_mapM_toList]; simp [hv₂_rhs]
+      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] :=
+      getOperandValues_one hOperands₂ hv₂_rhs
   have hEval₂ : interpretOp' (.builtin .unrealized_conversion_cast)
       (op₂.getProperties! newCtx.raw (.builtin .unrealized_conversion_cast))
       (op₂.getResultTypes! newCtx.raw) #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)]
@@ -2306,19 +2094,16 @@ theorem lowerSub_preservesSemantics :
       = some (.ok (#[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)], state'.memory, none)) := by
     rw [hRT₂]; simp [interpretOp', Data.LLVM.Int.cast, pure]
   have hConf₂ : RuntimeValue.ArrayConforms
-      #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] (op₂.getResultTypes! newCtx.raw) := by
-    rw [hRT₂]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] (op₂.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₂ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₃, hSet₂, hStep₂⟩ := interpretOp_step (inB := hInB₂) hTy₂ hOpVals₂ hEval₂ hConf₂
   -- Step op₃: `extui` of `y` to width `M`.
   have hv₃_2 : vs₃.getVar? (op₂.getResult 0 : ValuePtr)
       = some (RuntimeValue.int mtv.modulus.type.bitwidth (.val y)) := by
     rw [VariableState.getVar?_setResultValues? hSet₂]; simp [hNumRes₂]
   have hOpVals₃ : (InterpreterState.mk vs₃ state'.memory).variables.getOperandValues op₃
-      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₃, Array.mapM_eq_mapM_toList]; simp [hv₃_2]
+      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] :=
+      getOperandValues_one hOperands₃ hv₃_2
   have hEval₃ : interpretOp' (.arith .extui) (op₃.getProperties! newCtx.raw (.arith .extui))
       (op₃.getResultTypes! newCtx.raw) #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)]
       (op₃.getSuccessors! newCtx.raw) state'.memory
@@ -2329,10 +2114,8 @@ theorem lowerSub_preservesSemantics :
       dif_neg (show ¬ (mtv.modulus.type.bitwidth + 1 ≤ mtv.modulus.type.bitwidth) from by omega)]
   have hConf₃ : RuntimeValue.ArrayConforms
       #[RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
-          (.val (y.zeroExtend (mtv.modulus.type.bitwidth + 1)))] (op₃.getResultTypes! newCtx.raw) := by
-    rw [hRT₃]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+          (.val (y.zeroExtend (mtv.modulus.type.bitwidth + 1)))] (op₃.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₃ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₄, hSet₃, hStep₃⟩ := interpretOp_step (inB := hInB₃) hTy₃ hOpVals₃ hEval₃ hConf₃
   -- Step op₄: the modulus constant.
   have hOpVals₄ : (InterpreterState.mk vs₄ state'.memory).variables.getOperandValues op₄ = some #[] := by
@@ -2347,10 +2130,8 @@ theorem lowerSub_preservesSemantics :
   have hConf₄ : RuntimeValue.ArrayConforms
       #[RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
           (.val (BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value))]
-      (op₄.getResultTypes! newCtx.raw) := by
-    rw [hRT₄]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₄.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₄ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₅, hSet₄, hStep₄⟩ := interpretOp_step (inB := hInB₄) hTy₄ hOpVals₄ hEval₄ hConf₄
   -- Step op₅: `addi` computing `x_ext + q`.
   have hv₂_1 : vs₂.getVar? (op₁.getResult 0 : ValuePtr)
@@ -2370,9 +2151,8 @@ theorem lowerSub_preservesSemantics :
       = some #[RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
             (.val (x.zeroExtend (mtv.modulus.type.bitwidth + 1))),
           RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
-            (.val (BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value))] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₅, Array.mapM_eq_mapM_toList]; simp [hv₅_1, hv₅_4]
+            (.val (BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value))] :=
+      getOperandValues_two hOperands₅ hv₅_1 hv₅_4
   have hEval₅ : interpretOp' (.arith .addi) (op₅.getProperties! newCtx.raw (.arith .addi))
       (op₅.getResultTypes! newCtx.raw)
       #[RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
@@ -2390,10 +2170,8 @@ theorem lowerSub_preservesSemantics :
       #[RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
           (.val (x.zeroExtend (mtv.modulus.type.bitwidth + 1)
             + BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value))]
-      (op₅.getResultTypes! newCtx.raw) := by
-    rw [hRT₅]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₅.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₅ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₆, hSet₅, hStep₅⟩ := interpretOp_step (inB := hInB₅) hTy₅ hOpVals₅ hEval₅ hConf₅
   -- Step op₆: `subi` computing `(x_ext + q) - y_ext`.
   have hv₄_3 : vs₄.getVar? (op₃.getResult 0 : ValuePtr)
@@ -2414,9 +2192,8 @@ theorem lowerSub_preservesSemantics :
             (.val (x.zeroExtend (mtv.modulus.type.bitwidth + 1)
               + BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value)),
           RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
-            (.val (y.zeroExtend (mtv.modulus.type.bitwidth + 1)))] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₆, Array.mapM_eq_mapM_toList]; simp [hv₆_5, hv₆_3]
+            (.val (y.zeroExtend (mtv.modulus.type.bitwidth + 1)))] :=
+      getOperandValues_two hOperands₆ hv₆_5 hv₆_3
   have hEval₆ : interpretOp' (.arith .subi) (op₆.getProperties! newCtx.raw (.arith .subi))
       (op₆.getResultTypes! newCtx.raw)
       #[RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
@@ -2436,10 +2213,8 @@ theorem lowerSub_preservesSemantics :
           (.val (x.zeroExtend (mtv.modulus.type.bitwidth + 1)
             + BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value
             - y.zeroExtend (mtv.modulus.type.bitwidth + 1)))]
-      (op₆.getResultTypes! newCtx.raw) := by
-    rw [hRT₆]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₆.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₆ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₇, hSet₆, hStep₆⟩ := interpretOp_step (inB := hInB₆) hTy₆ hOpVals₆ hEval₆ hConf₆
   -- Step op₇: `remui` reducing modulo `q`.
   have hv₆_4 : vs₆.getVar? (op₄.getResult 0 : ValuePtr)
@@ -2462,9 +2237,8 @@ theorem lowerSub_preservesSemantics :
               + BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value
               - y.zeroExtend (mtv.modulus.type.bitwidth + 1))),
           RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
-            (.val (BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value))] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₇, Array.mapM_eq_mapM_toList]; simp [hv₇_6, hv₇_4]
+            (.val (BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value))] :=
+      getOperandValues_two hOperands₇ hv₇_6 hv₇_4
   have hEval₇ : interpretOp' (.arith .remui) (op₇.getProperties! newCtx.raw (.arith .remui))
       (op₇.getResultTypes! newCtx.raw)
       #[RuntimeValue.int (mtv.modulus.type.bitwidth + 1)
@@ -2494,10 +2268,8 @@ theorem lowerSub_preservesSemantics :
             + BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value
             - y.zeroExtend (mtv.modulus.type.bitwidth + 1))
             % BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value))]
-      (op₇.getResultTypes! newCtx.raw) := by
-    rw [hRT₇]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₇.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₇ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₈, hSet₇, hStep₇⟩ := interpretOp_step (inB := hInB₇) hTy₇ hOpVals₇ hEval₇ hConf₇
   -- Step op₈: `trunci` (nuw) back to width `N`.
   have hv₈_7 : vs₈.getVar? (op₇.getResult 0 : ValuePtr)
@@ -2512,9 +2284,8 @@ theorem lowerSub_preservesSemantics :
           (.val ((x.zeroExtend (mtv.modulus.type.bitwidth + 1)
             + BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value
             - y.zeroExtend (mtv.modulus.type.bitwidth + 1))
-            % BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value))] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₈, Array.mapM_eq_mapM_toList]; simp [hv₈_7]
+            % BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value))] :=
+      getOperandValues_one hOperands₈ hv₈_7
   have hNoPoison : (((x.zeroExtend (mtv.modulus.type.bitwidth + 1)
         + BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value
         - y.zeroExtend (mtv.modulus.type.bitwidth + 1))
@@ -2553,10 +2324,8 @@ theorem lowerSub_preservesSemantics :
             - y.zeroExtend (mtv.modulus.type.bitwidth + 1))
             % BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value).truncate
             mtv.modulus.type.bitwidth))]
-      (op₈.getResultTypes! newCtx.raw) := by
-    rw [hRT₈]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₈.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₈ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₉, hSet₈, hStep₈⟩ := interpretOp_step (inB := hInB₈) hTy₈ hOpVals₈ hEval₈ hConf₈
   -- Step op₉: cast the result back to `!mod_arith.int`.
   have hv₉_8 : vs₉.getVar? (op₈.getResult 0 : ValuePtr)
@@ -2573,9 +2342,8 @@ theorem lowerSub_preservesSemantics :
             + BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value
             - y.zeroExtend (mtv.modulus.type.bitwidth + 1))
             % BitVec.ofInt (mtv.modulus.type.bitwidth + 1) mtv.modulus.value).truncate
-            mtv.modulus.type.bitwidth))] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₉, Array.mapM_eq_mapM_toList]; simp [hv₉_8]
+            mtv.modulus.type.bitwidth))] :=
+      getOperandValues_one hOperands₉ hv₉_8
   have hEval₉ : interpretOp' (.builtin .unrealized_conversion_cast)
       (op₉.getProperties! newCtx.raw (.builtin .unrealized_conversion_cast))
       (op₉.getResultTypes! newCtx.raw)
@@ -2592,13 +2360,9 @@ theorem lowerSub_preservesSemantics :
     simp [interpretOp', Data.LLVM.Int.cast, pure]
   have hConf₉ : RuntimeValue.ArrayConforms
       #[RuntimeValue.int mtv.modulus.type.bitwidth (.val (Data.ModArith.sub mtv.modulus.value x y))]
-      (op₉.getResultTypes! newCtx.raw) := by
-    rw [hRT₉]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this
-    refine ⟨rfl, ?_⟩
-    simp only [Data.ModArith.isCanonical_val]
-    exact Data.ModArith.isCanonical_sub hQpos hQle
+      (op₉.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₉ ⟨rfl, by
+      simp only [Data.ModArith.isCanonical_val]; exact Data.ModArith.isCanonical_sub hQpos hQle⟩
   obtain ⟨vs₁₀, hSet₉, hStep₉⟩ := interpretOp_step (inB := hInB₉) hTy₉ hOpVals₉ hEval₉ hConf₉
   -- ## Assemble.
   refine ⟨⟨vs₁₀, state'.memory⟩, ?_, ?_, ?_⟩
@@ -2738,18 +2502,8 @@ theorem lowerMul_preservesSemantics :
       p.InBounds c.raw → p.InBounds c'.raw := by
     intro p c c' oT rT ops bo rg pr ip h₁ h₂ h₃ h₄ nO hC hin
     exact (WfRewriter.createOp_operation_inBounds_iff hC p).mpr (Or.inl hin)
-  -- None of the created ops are in bounds of the original context.
-  have hnfc₀ : ¬ op₀.InBounds ctx.raw := hnf₀
+  -- `op₁` is not in bounds of the original context (needed to thread the `rhs` operand past it).
   have hnfc₁ : ¬ op₁.InBounds ctx.raw := fun h => hnf₁ (mono hC₀ h)
-  have hnfc₂ : ¬ op₂.InBounds ctx.raw := fun h => hnf₂ (mono hC₁ (mono hC₀ h))
-  have hnfc₃ : ¬ op₃.InBounds ctx.raw := fun h => hnf₃ (mono hC₂ (mono hC₁ (mono hC₀ h)))
-  have hnfc₄ : ¬ op₄.InBounds ctx.raw := fun h => hnf₄ (mono hC₃ (mono hC₂ (mono hC₁ (mono hC₀ h))))
-  have hnfc₅ : ¬ op₅.InBounds ctx.raw :=
-    fun h => hnf₅ (mono hC₄ (mono hC₃ (mono hC₂ (mono hC₁ (mono hC₀ h)))))
-  have hnfc₆ : ¬ op₆.InBounds ctx.raw :=
-    fun h => hnf₆ (mono hC₅ (mono hC₄ (mono hC₃ (mono hC₂ (mono hC₁ (mono hC₀ h))))))
-  have hnfc₇ : ¬ op₇.InBounds ctx.raw :=
-    fun h => hnf₇ (mono hC₆ (mono hC₅ (mono hC₄ (mono hC₃ (mono hC₂ (mono hC₁ (mono hC₀ h)))))))
   have hInB₀ : op₀.InBounds newCtx.raw :=
     mono hC₈ (mono hC₇ (mono hC₆ (mono hC₅ (mono hC₄ (mono hC₃ (mono hC₂ (mono hC₁ hfresh₀)))))))
   have hInB₁ : op₁.InBounds newCtx.raw :=
@@ -2767,85 +2521,18 @@ theorem lowerMul_preservesSemantics :
   have hInB₇ : op₇.InBounds newCtx.raw :=
     mono hC₈ hfresh₇
   have hInB₈ : op₈.InBounds newCtx.raw := hfresh₈
-  -- Pairwise distinctness of the created ops.  `ne i j` says: if `opⱼ` is in bounds of a context
-  -- where `opᵢ` is fresh, then they differ.
+  -- Pairwise distinctness of the created ops.  `ne` says: if `a` is in bounds of a context where
+  -- `b` is freshly created (hence not yet in bounds), then `a ≠ b`.  We only need the distinctness
+  -- facts consumed when threading operand values through `setResultValues?` below; each is built
+  -- by pushing the earlier op's freshness forward (`mono`) to the context where the later op is new.
   have ne : ∀ {a b : OperationPtr} {c : WfIRContext OpCode},
       a.InBounds c.raw → ¬ b.InBounds c.raw → a ≠ b := by
     intro a b c ha hb heq; subst heq; exact hb ha
-  -- Forward in-bounds facts: `opⱼ` is in bounds of the context where `opᵢ` (i > j) is created.
-  have i01 : op₀.InBounds ctx₁.raw := hfresh₀
-  have i02 : op₀.InBounds ctx₂.raw := mono hC₁ i01
-  have i03 : op₀.InBounds ctx₃.raw := mono hC₂ i02
-  have i04 : op₀.InBounds ctx₄.raw := mono hC₃ i03
-  have i05 : op₀.InBounds ctx₅.raw := mono hC₄ i04
-  have i06 : op₀.InBounds ctx₆.raw := mono hC₅ i05
-  have i07 : op₀.InBounds ctx₇.raw := mono hC₆ i06
-  have i08 : op₀.InBounds ctx₈.raw := mono hC₇ i07
-  have i12 : op₁.InBounds ctx₂.raw := hfresh₁
-  have i13 : op₁.InBounds ctx₃.raw := mono hC₂ i12
-  have i14 : op₁.InBounds ctx₄.raw := mono hC₃ i13
-  have i15 : op₁.InBounds ctx₅.raw := mono hC₄ i14
-  have i16 : op₁.InBounds ctx₆.raw := mono hC₅ i15
-  have i17 : op₁.InBounds ctx₇.raw := mono hC₆ i16
-  have i18 : op₁.InBounds ctx₈.raw := mono hC₇ i17
-  have i23 : op₂.InBounds ctx₃.raw := hfresh₂
-  have i24 : op₂.InBounds ctx₄.raw := mono hC₃ i23
-  have i25 : op₂.InBounds ctx₅.raw := mono hC₄ i24
-  have i26 : op₂.InBounds ctx₆.raw := mono hC₅ i25
-  have i27 : op₂.InBounds ctx₇.raw := mono hC₆ i26
-  have i28 : op₂.InBounds ctx₈.raw := mono hC₇ i27
-  have i34 : op₃.InBounds ctx₄.raw := hfresh₃
-  have i35 : op₃.InBounds ctx₅.raw := mono hC₄ i34
-  have i36 : op₃.InBounds ctx₆.raw := mono hC₅ i35
-  have i37 : op₃.InBounds ctx₇.raw := mono hC₆ i36
-  have i38 : op₃.InBounds ctx₈.raw := mono hC₇ i37
-  have i45 : op₄.InBounds ctx₅.raw := hfresh₄
-  have i46 : op₄.InBounds ctx₆.raw := mono hC₅ i45
-  have i47 : op₄.InBounds ctx₇.raw := mono hC₆ i46
-  have i48 : op₄.InBounds ctx₈.raw := mono hC₇ i47
-  have i56 : op₅.InBounds ctx₆.raw := hfresh₅
-  have i57 : op₅.InBounds ctx₇.raw := mono hC₆ i56
-  have i58 : op₅.InBounds ctx₈.raw := mono hC₇ i57
-  have i67 : op₆.InBounds ctx₇.raw := hfresh₆
-  have i68 : op₆.InBounds ctx₈.raw := mono hC₇ i67
-  have i78 : op₇.InBounds ctx₈.raw := hfresh₇
-  -- Distinctness of each (i, j) pair with i < j, via the context where opⱼ is fresh.
-  have d01 : op₀ ≠ op₁ := ne i01 hnf₁
-  have d02 : op₀ ≠ op₂ := ne i02 hnf₂
-  have d03 : op₀ ≠ op₃ := ne i03 hnf₃
-  have d04 : op₀ ≠ op₄ := ne i04 hnf₄
-  have d05 : op₀ ≠ op₅ := ne i05 hnf₅
-  have d06 : op₀ ≠ op₆ := ne i06 hnf₆
-  have d07 : op₀ ≠ op₇ := ne i07 hnf₇
-  have d08 : op₀ ≠ op₈ := ne i08 hnf₈
-  have d12 : op₁ ≠ op₂ := ne i12 hnf₂
-  have d13 : op₁ ≠ op₃ := ne i13 hnf₃
-  have d14 : op₁ ≠ op₄ := ne i14 hnf₄
-  have d15 : op₁ ≠ op₅ := ne i15 hnf₅
-  have d16 : op₁ ≠ op₆ := ne i16 hnf₆
-  have d17 : op₁ ≠ op₇ := ne i17 hnf₇
-  have d18 : op₁ ≠ op₈ := ne i18 hnf₈
-  have d23 : op₂ ≠ op₃ := ne i23 hnf₃
-  have d24 : op₂ ≠ op₄ := ne i24 hnf₄
-  have d25 : op₂ ≠ op₅ := ne i25 hnf₅
-  have d26 : op₂ ≠ op₆ := ne i26 hnf₆
-  have d27 : op₂ ≠ op₇ := ne i27 hnf₇
-  have d28 : op₂ ≠ op₈ := ne i28 hnf₈
-  have d34 : op₃ ≠ op₄ := ne i34 hnf₄
-  have d35 : op₃ ≠ op₅ := ne i35 hnf₅
-  have d36 : op₃ ≠ op₆ := ne i36 hnf₆
-  have d37 : op₃ ≠ op₇ := ne i37 hnf₇
-  have d38 : op₃ ≠ op₈ := ne i38 hnf₈
-  have d45 : op₄ ≠ op₅ := ne i45 hnf₅
-  have d46 : op₄ ≠ op₆ := ne i46 hnf₆
-  have d47 : op₄ ≠ op₇ := ne i47 hnf₇
-  have d48 : op₄ ≠ op₈ := ne i48 hnf₈
-  have d56 : op₅ ≠ op₆ := ne i56 hnf₆
-  have d57 : op₅ ≠ op₇ := ne i57 hnf₇
-  have d58 : op₅ ≠ op₈ := ne i58 hnf₈
-  have d67 : op₆ ≠ op₇ := ne i67 hnf₇
-  have d68 : op₆ ≠ op₈ := ne i68 hnf₈
-  have d78 : op₇ ≠ op₈ := ne i78 hnf₈
+  have d12 : op₁ ≠ op₂ := ne hfresh₁ hnf₂
+  have d13 : op₁ ≠ op₃ := ne (mono hC₂ hfresh₁) hnf₃
+  have d14 : op₁ ≠ op₄ := ne (mono hC₃ (mono hC₂ hfresh₁)) hnf₄
+  have d34 : op₃ ≠ op₄ := ne hfresh₃ hnf₄
+  have d45 : op₄ ≠ op₅ := ne hfresh₄ hnf₅
   -- `WithCreatedOps` chains from each creation context to the final one.
   have w1 : WfIRContext.WithCreatedOps ctx₁ newCtx := buildOps_withCreatedOps hbuild₁
   have w2 : WfIRContext.WithCreatedOps ctx₂ newCtx := buildOps_withCreatedOps hbuild₂
@@ -3162,44 +2849,10 @@ theorem lowerMul_preservesSemantics :
   -- ## Width side conditions and the pipeline arithmetic core.
   have hN1 : 1 ≤ mtv.modulus.type.bitwidth := by omega
   have hnm : mtv.modulus.type.bitwidth ≤ 2 * mtv.modulus.type.bitwidth := by omega
-  have hqn : (mtv.modulus.value.toNat : Int) = mtv.modulus.value :=
-    Int.toNat_of_nonneg (by omega)
-  have hcastN1 : (2:Int)^(mtv.modulus.type.bitwidth-1)
-      = ((2^(mtv.modulus.type.bitwidth-1):Nat):Int) := by push_cast; rfl
-  have hqw' := hQwidth
-  rw [hcastN1] at hqw'
-  have hqtn : mtv.modulus.value.toNat < 2^(mtv.modulus.type.bitwidth-1) := by
-    have : (mtv.modulus.value.toNat:Int) < ((2^(mtv.modulus.type.bitwidth-1):Nat):Int) := by
-      rw [hqn]; exact hqw'
-    exact_mod_cast this
-  have hc2N : (2:Int)^(2*mtv.modulus.type.bitwidth)
-      = ((2^(2*mtv.modulus.type.bitwidth):Nat):Int) := by push_cast; rfl
-  have hqm : mtv.modulus.value * mtv.modulus.value ≤ 2 ^ (2 * mtv.modulus.type.bitwidth) := by
-    have h1 : mtv.modulus.value.toNat * mtv.modulus.value.toNat
-        ≤ 2^(mtv.modulus.type.bitwidth-1) * 2^(mtv.modulus.type.bitwidth-1) :=
-      Nat.mul_le_mul (by omega) (by omega)
-    have h2 : (2:Nat)^(mtv.modulus.type.bitwidth-1) * 2^(mtv.modulus.type.bitwidth-1)
-        ≤ 2^(2*mtv.modulus.type.bitwidth) := by
-      rw [← Nat.pow_add]; exact Nat.pow_le_pow_right (by omega) (by omega)
-    have hnatprod : mtv.modulus.value.toNat * mtv.modulus.value.toNat
-        ≤ 2^(2*mtv.modulus.type.bitwidth) := by omega
-    rw [hc2N, ← hqn]; push_cast; exact_mod_cast hnatprod
-  have hqm2 : mtv.modulus.value < 2 ^ (2 * mtv.modulus.type.bitwidth) := by
-    have hlt : mtv.modulus.value.toNat < 2^(2*mtv.modulus.type.bitwidth) := by
-      have : (2:Nat)^(mtv.modulus.type.bitwidth-1) ≤ 2^(2*mtv.modulus.type.bitwidth) :=
-        Nat.pow_le_pow_right (by omega) (by omega)
-      omega
-    rw [hc2N, ← hqn]; exact_mod_cast hlt
-  have hQle : mtv.modulus.value ≤ 2 ^ mtv.modulus.type.bitwidth := by
-    have hle : (2:Nat)^(mtv.modulus.type.bitwidth-1) ≤ 2^mtv.modulus.type.bitwidth :=
-      Nat.pow_le_pow_right (by omega) (by omega)
-    have hcast : (2:Int)^mtv.modulus.type.bitwidth = ((2^mtv.modulus.type.bitwidth:Nat):Int) := by
-      push_cast; rfl
-    rw [hcast]
-    have hb : ((2^(mtv.modulus.type.bitwidth-1):Nat):Int) ≤ ((2^mtv.modulus.type.bitwidth:Nat):Int) := by
-      exact_mod_cast hle
-    have : mtv.modulus.value < ((2^(mtv.modulus.type.bitwidth-1):Nat):Int) := hqw'
-    omega
+  obtain ⟨hqm, hqm2⟩ :=
+    Data.ModArith.modulus_sq_lt_two_pow_two_mul hN1 (by omega) hQwidth
+  have hQle : mtv.modulus.value ≤ 2 ^ mtv.modulus.type.bitwidth :=
+    Data.ModArith.modulus_le_two_pow hN1 hQwidth
   -- The pipeline result and its canonicity.
   have hPipeEq : ((x.zeroExtend (2 * mtv.modulus.type.bitwidth)
         * y.zeroExtend (2 * mtv.modulus.type.bitwidth))
@@ -3215,9 +2868,8 @@ theorem lowerMul_preservesSemantics :
   -- Notation for the intermediate `BitVec`s flowing through the pipeline.
   -- Step op₀: cast `lhs : iN`.  Value: `.int N (.val x)`.
   have hOpVals₀ : state'.variables.getOperandValues op₀
-      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₀, Array.mapM_eq_mapM_toList]; simp [hTLhs]
+      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] :=
+      getOperandValues_one hOperands₀ hTLhs
   have hEval₀ : interpretOp' (.builtin .unrealized_conversion_cast)
       (op₀.getProperties! newCtx.raw (.builtin .unrealized_conversion_cast))
       (op₀.getResultTypes! newCtx.raw)
@@ -3226,10 +2878,8 @@ theorem lowerMul_preservesSemantics :
       = some (.ok (#[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)], state'.memory, none)) := by
     rw [hRT₀]; simp [interpretOp', Data.LLVM.Int.cast, pure]
   have hConf₀ : RuntimeValue.ArrayConforms
-      #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] (op₀.getResultTypes! newCtx.raw) := by
-    rw [hRT₀]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] (op₀.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₀ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₁, hSet₀, hStep₀⟩ := interpretOp_step (inB := hInB₀) hTy₀ hOpVals₀ hEval₀ hConf₀
   -- Lookups in `vs₁`.
   have hv₁_0 : vs₁.getVar? (op₀.getResult 0 : ValuePtr)
@@ -3239,9 +2889,8 @@ theorem lowerMul_preservesSemantics :
     rw [getVar?_setResultValues?_outer hrhsIn hnf₀ hSet₀]; exact hTRhs
   -- Step op₁: `extui` of `x` to width `M = N + 1`.  Value: `.int M (.val (x.zeroExtend M))`.
   have hOpVals₁ : (InterpreterState.mk vs₁ state'.memory).variables.getOperandValues op₁
-      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₁, Array.mapM_eq_mapM_toList]; simp [hv₁_0]
+      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)] :=
+      getOperandValues_one hOperands₁ hv₁_0
   have hEval₁ : interpretOp' (.arith .extui) (op₁.getProperties! newCtx.raw (.arith .extui))
       (op₁.getResultTypes! newCtx.raw)
       #[RuntimeValue.int mtv.modulus.type.bitwidth (.val x)]
@@ -3254,18 +2903,15 @@ theorem lowerMul_preservesSemantics :
   have hConf₁ : RuntimeValue.ArrayConforms
       #[RuntimeValue.int (2 * mtv.modulus.type.bitwidth)
           (.val (x.zeroExtend (2 * mtv.modulus.type.bitwidth)))]
-      (op₁.getResultTypes! newCtx.raw) := by
-    rw [hRT₁]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₁.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₁ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₂, hSet₁, hStep₁⟩ := interpretOp_step (inB := hInB₁) hTy₁ hOpVals₁ hEval₁ hConf₁
   -- Step op₂: cast `rhs : iN`.  Value: `.int N (.val y)`.
   have hv₂_rhs : vs₂.getVar? operands[1]! = some (.int mtv.modulus.type.bitwidth (.val y)) := by
     rw [getVar?_setResultValues?_outer hrhsIn hnfc₁ hSet₁]; exact hv₁_rhs
   have hOpVals₂ : (InterpreterState.mk vs₂ state'.memory).variables.getOperandValues op₂
-      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₂, Array.mapM_eq_mapM_toList]; simp [hv₂_rhs]
+      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] :=
+      getOperandValues_one hOperands₂ hv₂_rhs
   have hEval₂ : interpretOp' (.builtin .unrealized_conversion_cast)
       (op₂.getProperties! newCtx.raw (.builtin .unrealized_conversion_cast))
       (op₂.getResultTypes! newCtx.raw)
@@ -3274,19 +2920,16 @@ theorem lowerMul_preservesSemantics :
       = some (.ok (#[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)], state'.memory, none)) := by
     rw [hRT₂]; simp [interpretOp', Data.LLVM.Int.cast, pure]
   have hConf₂ : RuntimeValue.ArrayConforms
-      #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] (op₂.getResultTypes! newCtx.raw) := by
-    rw [hRT₂]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] (op₂.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₂ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₃, hSet₂, hStep₂⟩ := interpretOp_step (inB := hInB₂) hTy₂ hOpVals₂ hEval₂ hConf₂
   -- Step op₃: `extui` of `y` to width `M`.
   have hv₃_2 : vs₃.getVar? (op₂.getResult 0 : ValuePtr)
       = some (RuntimeValue.int mtv.modulus.type.bitwidth (.val y)) := by
     rw [VariableState.getVar?_setResultValues? hSet₂]; simp [hNumRes₂]
   have hOpVals₃ : (InterpreterState.mk vs₃ state'.memory).variables.getOperandValues op₃
-      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₃, Array.mapM_eq_mapM_toList]; simp [hv₃_2]
+      = some #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)] :=
+      getOperandValues_one hOperands₃ hv₃_2
   have hEval₃ : interpretOp' (.arith .extui) (op₃.getProperties! newCtx.raw (.arith .extui))
       (op₃.getResultTypes! newCtx.raw)
       #[RuntimeValue.int mtv.modulus.type.bitwidth (.val y)]
@@ -3299,10 +2942,8 @@ theorem lowerMul_preservesSemantics :
   have hConf₃ : RuntimeValue.ArrayConforms
       #[RuntimeValue.int (2 * mtv.modulus.type.bitwidth)
           (.val (y.zeroExtend (2 * mtv.modulus.type.bitwidth)))]
-      (op₃.getResultTypes! newCtx.raw) := by
-    rw [hRT₃]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₃.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₃ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₄, hSet₃, hStep₃⟩ := interpretOp_step (inB := hInB₃) hTy₃ hOpVals₃ hEval₃ hConf₃
   -- Step op₄: the modulus constant `q : iM`.
   have hOpVals₄ : (InterpreterState.mk vs₄ state'.memory).variables.getOperandValues op₄ = some #[] := by
@@ -3317,10 +2958,8 @@ theorem lowerMul_preservesSemantics :
   have hConf₄ : RuntimeValue.ArrayConforms
       #[RuntimeValue.int (2 * mtv.modulus.type.bitwidth)
           (.val (BitVec.ofInt (2 * mtv.modulus.type.bitwidth) mtv.modulus.value))]
-      (op₄.getResultTypes! newCtx.raw) := by
-    rw [hRT₄]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₄.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₄ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₅, hSet₄, hStep₄⟩ := interpretOp_step (inB := hInB₄) hTy₄ hOpVals₄ hEval₄ hConf₄
   -- Step op₅: `muli` of the two extended operands.
   have hv₂_1 : vs₂.getVar? (op₁.getResult 0 : ValuePtr)
@@ -3344,9 +2983,8 @@ theorem lowerMul_preservesSemantics :
       = some #[RuntimeValue.int (2 * mtv.modulus.type.bitwidth)
             (.val (x.zeroExtend (2 * mtv.modulus.type.bitwidth))),
           RuntimeValue.int (2 * mtv.modulus.type.bitwidth)
-            (.val (y.zeroExtend (2 * mtv.modulus.type.bitwidth)))] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₅, Array.mapM_eq_mapM_toList]; simp [hv₅_1, hv₅_3]
+            (.val (y.zeroExtend (2 * mtv.modulus.type.bitwidth)))] :=
+      getOperandValues_two hOperands₅ hv₅_1 hv₅_3
   have hEval₅ : interpretOp' (.arith .muli) (op₅.getProperties! newCtx.raw (.arith .muli))
       (op₅.getResultTypes! newCtx.raw)
       #[RuntimeValue.int (2 * mtv.modulus.type.bitwidth)
@@ -3363,10 +3001,8 @@ theorem lowerMul_preservesSemantics :
       #[RuntimeValue.int (2 * mtv.modulus.type.bitwidth)
           (.val (x.zeroExtend (2 * mtv.modulus.type.bitwidth)
             * y.zeroExtend (2 * mtv.modulus.type.bitwidth)))]
-      (op₅.getResultTypes! newCtx.raw) := by
-    rw [hRT₅]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₅.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₅ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₆, hSet₅, hStep₅⟩ := interpretOp_step (inB := hInB₅) hTy₅ hOpVals₅ hEval₅ hConf₅
   -- Step op₆: `remui` reducing modulo `q`.
   have hv₅_4 : vs₅.getVar? (op₄.getResult 0 : ValuePtr)
@@ -3387,9 +3023,8 @@ theorem lowerMul_preservesSemantics :
             (.val (x.zeroExtend (2 * mtv.modulus.type.bitwidth)
               * y.zeroExtend (2 * mtv.modulus.type.bitwidth))),
           RuntimeValue.int (2 * mtv.modulus.type.bitwidth)
-            (.val (BitVec.ofInt (2 * mtv.modulus.type.bitwidth) mtv.modulus.value))] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₆, Array.mapM_eq_mapM_toList]; simp [hv₆_5, hv₆_4]
+            (.val (BitVec.ofInt (2 * mtv.modulus.type.bitwidth) mtv.modulus.value))] :=
+      getOperandValues_two hOperands₆ hv₆_5 hv₆_4
   have hEval₆ : interpretOp' (.arith .remui) (op₆.getProperties! newCtx.raw (.arith .remui))
       (op₆.getResultTypes! newCtx.raw)
       #[RuntimeValue.int (2 * mtv.modulus.type.bitwidth)
@@ -3416,10 +3051,8 @@ theorem lowerMul_preservesSemantics :
           (.val ((x.zeroExtend (2 * mtv.modulus.type.bitwidth)
             * y.zeroExtend (2 * mtv.modulus.type.bitwidth))
             % BitVec.ofInt (2 * mtv.modulus.type.bitwidth) mtv.modulus.value))]
-      (op₆.getResultTypes! newCtx.raw) := by
-    rw [hRT₆]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₆.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₆ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₇, hSet₆, hStep₆⟩ := interpretOp_step (inB := hInB₆) hTy₆ hOpVals₆ hEval₆ hConf₆
   -- Step op₇: `trunci` (nuw) back to width `N`.
   have hv₇_6 : vs₇.getVar? (op₆.getResult 0 : ValuePtr)
@@ -3432,9 +3065,8 @@ theorem lowerMul_preservesSemantics :
       = some #[RuntimeValue.int (2 * mtv.modulus.type.bitwidth)
           (.val ((x.zeroExtend (2 * mtv.modulus.type.bitwidth)
             * y.zeroExtend (2 * mtv.modulus.type.bitwidth))
-            % BitVec.ofInt (2 * mtv.modulus.type.bitwidth) mtv.modulus.value))] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₇, Array.mapM_eq_mapM_toList]; simp [hv₇_6]
+            % BitVec.ofInt (2 * mtv.modulus.type.bitwidth) mtv.modulus.value))] :=
+      getOperandValues_one hOperands₇ hv₇_6
   -- No-poison side condition for the `nuw` truncation, from canonicity.
   have hNoPoison : (((x.zeroExtend (2 * mtv.modulus.type.bitwidth)
         * y.zeroExtend (2 * mtv.modulus.type.bitwidth))
@@ -3470,10 +3102,8 @@ theorem lowerMul_preservesSemantics :
             * y.zeroExtend (2 * mtv.modulus.type.bitwidth))
             % BitVec.ofInt (2 * mtv.modulus.type.bitwidth) mtv.modulus.value).truncate
             mtv.modulus.type.bitwidth))]
-      (op₇.getResultTypes! newCtx.raw) := by
-    rw [hRT₇]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this; simp [RuntimeValue.Conforms]
+      (op₇.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₇ (by simp [RuntimeValue.Conforms])
   obtain ⟨vs₈, hSet₇, hStep₇⟩ := interpretOp_step (inB := hInB₇) hTy₇ hOpVals₇ hEval₇ hConf₇
   -- Step op₈: cast the result back to `!mod_arith.int`.
   have hv₈_7 : vs₈.getVar? (op₇.getResult 0 : ValuePtr)
@@ -3488,9 +3118,8 @@ theorem lowerMul_preservesSemantics :
           (.val (((x.zeroExtend (2 * mtv.modulus.type.bitwidth)
             * y.zeroExtend (2 * mtv.modulus.type.bitwidth))
             % BitVec.ofInt (2 * mtv.modulus.type.bitwidth) mtv.modulus.value).truncate
-            mtv.modulus.type.bitwidth))] := by
-    unfold VariableState.getOperandValues
-    rw [hOperands₈, Array.mapM_eq_mapM_toList]; simp [hv₈_7]
+            mtv.modulus.type.bitwidth))] :=
+      getOperandValues_one hOperands₈ hv₈_7
   have hEval₈ : interpretOp' (.builtin .unrealized_conversion_cast)
       (op₈.getProperties! newCtx.raw (.builtin .unrealized_conversion_cast))
       (op₈.getResultTypes! newCtx.raw)
@@ -3506,13 +3135,9 @@ theorem lowerMul_preservesSemantics :
     simp [interpretOp', Data.LLVM.Int.cast, pure]
   have hConf₈ : RuntimeValue.ArrayConforms
       #[RuntimeValue.int mtv.modulus.type.bitwidth (.val (Data.ModArith.mul mtv.modulus.value x y))]
-      (op₈.getResultTypes! newCtx.raw) := by
-    rw [hRT₈]; refine ⟨by rfl, ?_⟩; intro i hi
-    have : i = 0 := by simpa using hi
-    subst this
-    refine ⟨rfl, ?_⟩
-    simp only [Data.ModArith.isCanonical_val]
-    exact Data.ModArith.isCanonical_mul hQpos hQle
+      (op₈.getResultTypes! newCtx.raw) :=
+    arrayConforms_singleton hRT₈ ⟨rfl, by
+      simp only [Data.ModArith.isCanonical_val]; exact Data.ModArith.isCanonical_mul hQpos hQle⟩
   obtain ⟨vs₉, hSet₈, hStep₈⟩ := interpretOp_step (inB := hInB₈) hTy₈ hOpVals₈ hEval₈ hConf₈
   -- ## Assemble the nine steps into the full target interpretation.
   refine ⟨⟨vs₉, state'.memory⟩, ?_, ?_, ?_⟩
