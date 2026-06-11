@@ -173,8 +173,16 @@ def Properties.toAttrDict (opCode : OpCode) (props : propertiesOf opCode) :
       (Std.HashMap.emptyWithCapacity 1).insert "value".toUTF8 (Attribute.integerAttr intAttr)
     | .float floatAttr =>
       (Std.HashMap.emptyWithCapacity 1).insert "value".toUTF8 (Attribute.floatAttr floatAttr)
-  | .arith .addi | .arith .subi | .arith .muli | .arith .shli | .arith .trunci
+  | .arith .addi | .arith .subi | .arith .muli | .arith .shli | .arith .trunci => Id.run do
+    /- The arith dialect models the overflow flags as an `#arith.overflow<...>` attribute.
+       The flags default to `none`, in which case we do not print them. -/
+    let mut dict := Std.HashMap.emptyWithCapacity 1
+    if props.nsw || props.nuw then
+      dict := dict.insert "overflowFlags".toUTF8
+        (Attribute.arithOverflowFlagsAttr { nsw := props.nsw, nuw := props.nuw })
+    dict
   | .llvm .add | .llvm .sub | .llvm .mul | .llvm .shl | .llvm .trunc => Id.run do
+    /- The LLVM dialect models the overflow flags as an `i32` bitmask property. -/
     let mut dict := Std.HashMap.emptyWithCapacity 1
 
     let mut val := 0

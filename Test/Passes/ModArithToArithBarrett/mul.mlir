@@ -29,6 +29,6 @@
 // CHECK-NEXT:   [[GE:%.*]] = "arith.cmpi"([[T]], [[Q]]) <{"predicate" = 9 : i64}> : (i128, i128) -> i1
 // CHECK-NEXT:   [[DIFF:%.*]] = "arith.subi"([[T]], [[Q]]) : (i128, i128) -> i128
 // CHECK-NEXT:   [[RES:%.*]] = "arith.select"([[GE]], [[DIFF]], [[T]]) : (i1, i128, i128) -> i128
-// CHECK-NEXT:   [[TR:%.*]] = "arith.trunci"([[RES]]) <{"overflowFlags" = 2 : i32}> : (i128) -> i32
+// CHECK-NEXT:   [[TR:%.*]] = "arith.trunci"([[RES]]) <{"overflowFlags" = #arith.overflow<nuw>}> : (i128) -> i32
 // CHECK-NEXT:   [[OUT:%.*]] = "builtin.unrealized_conversion_cast"([[TR]]) : (i32) -> !mod_arith.int<7 : i32>
 // CHECK-NEXT:   "func.return"([[OUT]]) : (!mod_arith.int<7 : i32>) -> ()

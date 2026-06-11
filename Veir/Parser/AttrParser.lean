@@ -208,6 +208,31 @@ def parseFloatFastMathFlagsAttr : AttrParserM (Option FastMathFlagsAttr) := do
       nsz := floatFastMathFlags.nsz || flag.nsz }
   return some floatFastMathFlags
 
+def parseArithOverflowFlag : AttrParserM ArithOverflowFlagsAttr := do
+  if (← parseOptionalKeyword "nsw".toByteArray) then
+    return { nsw := true, nuw := false }
+  else if (← parseOptionalKeyword "nuw".toByteArray) then
+    return { nsw := false, nuw := true }
+  else if (← parseOptionalKeyword "none".toByteArray) then
+    return { nsw := false, nuw := false }
+  else
+    throwAtCurrentPos "expected overflow flag 'none', 'nsw', or 'nuw'"
+
+/--
+  Parse an arith overflow flags attribute body, e.g. `<none>`, `<nsw>`, or `<nsw, nuw>`.
+  The `#arith.overflow` prefix is expected to have already been consumed.
+-/
+def parseArithOverflowFlagsAttr : AttrParserM (Option ArithOverflowFlagsAttr) := do
+  parsePunctuation "<"
+  let values ← parseList parseArithOverflowFlag
+  parsePunctuation ">"
+  let mut overflowFlags := ArithOverflowFlagsAttr.mk false false
+  for flag in values do
+    overflowFlags := {
+      nsw := overflowFlags.nsw || flag.nsw,
+      nuw := overflowFlags.nuw || flag.nuw }
+  return some overflowFlags
+
 def isClosingBracket (kind : TokenKind) : Bool :=
   kind = .greater || kind = .rParen || kind = .rSquare || kind = .rBrace
 
@@ -310,6 +335,10 @@ partial def parseOptionalDialectAttr : AttrParserM (Option Attribute) := do
 
   if dialectName = "llvm.fastmath".toByteArray then do
     return ← parseFloatFastMathFlagsAttr
+
+  if dialectName = "arith.overflow".toByteArray then do
+    let some flags ← parseArithOverflowFlagsAttr | return none
+    return some (flags : Attribute)
 
   if dialectName = "llvm.cconv".toByteArray then do
     parsePunctuation "<"

@@ -75,6 +75,15 @@ structure FastMathFlagsAttr where
 deriving Inhabited, Repr, DecidableEq, Hashable
 
 /--
+  Integer overflow flags attribute of the `arith` dialect,
+  e.g. `#arith.overflow<none>` or `#arith.overflow<nsw, nuw>`.
+-/
+structure ArithOverflowFlagsAttr where
+  nsw : Bool
+  nuw : Bool
+deriving Inhabited, Repr, DecidableEq, Hashable
+
+/--
   LLVM calling convention attribute, e.g. `#llvm.cconv<ccc>`.
 -/
 structure CConvAttr where
@@ -344,6 +353,8 @@ inductive Attribute
 | floatAttr (attr : FloatAttr)
 /-- Float fast math flags attribute -/
 | fastMathFlagsAttr (attr : FastMathFlagsAttr)
+/-- Arith integer overflow flags attribute -/
+| arithOverflowFlagsAttr (attr : ArithOverflowFlagsAttr)
 /-- LLVM calling convention attribute -/
 | cconvAttr (attr : CConvAttr)
 /-- LLVM linkage attribute -/
@@ -535,6 +546,10 @@ def Attribute.decEq (attr1 attr2 : Attribute) : Decidable (attr1 = attr2) := by
     exact (match decEq attr1 attr2 with
       | isTrue hEq => isTrue (by grind)
       | isFalse hEq => isFalse (by grind))
+  case arithOverflowFlagsAttr.arithOverflowFlagsAttr attr1 attr2 =>
+    exact (match decEq attr1 attr2 with
+      | isTrue hEq => isTrue (by grind)
+      | isFalse hEq => isFalse (by grind))
   case cconvAttr.cconvAttr attr1 attr2 =>
     exact (match decEq attr1 attr2 with
       | isTrue hEq => isTrue (by grind)
@@ -679,6 +694,15 @@ instance : ToString FastMathFlagsAttr where
       if type.nsz then array := array ++ ["nsz"]
       if !type.nnan && !type.ninf && !type.nsz then array := array ++ ["none"]
     s!"#llvm.fastmath<{String.intercalate ", " array}>"
+
+instance : ToString ArithOverflowFlagsAttr where
+  toString attr :=
+    let flags := match attr.nsw, attr.nuw with
+      | false, false => "none"
+      | true, false => "nsw"
+      | false, true => "nuw"
+      | true, true => "nsw, nuw"
+    s!"#arith.overflow<{flags}>"
 
 instance : ToString CConvAttr where
   toString attr := s!"#llvm.cconv<{attr.value}>"
@@ -860,6 +884,7 @@ def Attribute.toString (attr : Attribute) : String :=
   | .integerType type => ToString.toString type
   | .floatType type => ToString.toString type
   | .fastMathFlagsAttr attr => ToString.toString attr
+  | .arithOverflowFlagsAttr attr => ToString.toString attr
   | .cconvAttr attr => ToString.toString attr
   | .linkageAttr attr => ToString.toString attr
   | .framePointerKindAttr attr => ToString.toString attr
@@ -924,6 +949,9 @@ instance : Coe FloatType Attribute where
 
 instance : Coe FastMathFlagsAttr Attribute where
   coe flags := .fastMathFlagsAttr flags
+
+instance : Coe ArithOverflowFlagsAttr Attribute where
+  coe flags := .arithOverflowFlagsAttr flags
 
 instance : Coe CConvAttr Attribute where
   coe attr := .cconvAttr attr
@@ -1021,6 +1049,7 @@ def isType (attr : Attribute) : Bool :=
   | .integerType _ => true
   | .floatType _ => true
   | .fastMathFlagsAttr _ => false
+  | .arithOverflowFlagsAttr _ => false
   | .cconvAttr _ => false
   | .linkageAttr _ => false
   | .framePointerKindAttr _ => false
@@ -1069,6 +1098,8 @@ theorem isType_integerType type : (integerType type).isType = true := by rfl
 theorem isType_floatType type : (floatType type).isType = true := by rfl
 @[simp, grind =]
 theorem isType_fastMathFlags flags : (fastMathFlagsAttr flags).isType = false := by rfl
+@[simp, grind =]
+theorem isType_arithOverflowFlags flags : (arithOverflowFlagsAttr flags).isType = false := by rfl
 @[simp, grind =]
 theorem isType_cconv attr : (cconvAttr attr).isType = false := by rfl
 @[simp, grind =]

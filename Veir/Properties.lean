@@ -63,18 +63,21 @@ deriving Inhabited, Repr, Hashable, DecidableEq
 
 def NswNuwProperties.fromAttrDict (attrDict : Std.HashMap ByteArray Attribute) :
     Except String NswNuwProperties := do
-  let value ← match attrDict["overflowFlags".toUTF8]? with
-    | some (.integerAttr flags) =>
-      if flags.type.bitwidth ≠ 32 then
-        .error s!"expected 'overflowFlags' to be an integer attribute of bitwidth 32, but got i{flags.type.bitwidth}"
-      else
-        .ok flags.value
-    | some attr => .error s!"expected 'overflowFlags' to be an optional integer attribute, but got {attr}"
-    | none => .ok 0
-
-  let nsw := (value.toNat &&& 1) ≠ 0
-  let nuw := (value.toNat &&& 2) ≠ 0
-  return { nsw := nsw, nuw := nuw }
+  match attrDict["overflowFlags".toUTF8]? with
+  | some (.arithOverflowFlagsAttr flags) =>
+    return { nsw := flags.nsw, nuw := flags.nuw }
+  /- The LLVM dialect (and, before the introduction of `#arith.overflow`, also the arith
+     dialect) encodes the overflow flags as an `i32` bitmask, which we keep accepting. -/
+  | some (.integerAttr flags) =>
+    if flags.type.bitwidth ≠ 32 then
+      .error s!"expected 'overflowFlags' to be an integer attribute of bitwidth 32, but got i{flags.type.bitwidth}"
+    else
+      let nsw := (flags.value.toNat &&& 1) ≠ 0
+      let nuw := (flags.value.toNat &&& 2) ≠ 0
+      return { nsw := nsw, nuw := nuw }
+  | some attr =>
+    .error s!"expected 'overflowFlags' to be an optional overflow flags or integer attribute, but got {attr}"
+  | none => return { nsw := false, nuw := false }
 
 /--
   Properties of operations that can have the `exact` flags, such as
