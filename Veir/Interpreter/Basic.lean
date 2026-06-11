@@ -61,6 +61,7 @@ def Conforms (val : RuntimeValue) (ty : TypeAttr) : Prop :=
   | .float bw _, ⟨.floatType floatType, _⟩ => floatType.bitwidth = bw
   | .reg _, ⟨.registerType _, _⟩ => True
   | .addr _, ⟨.llvmPointerType _, _⟩ => True
+  | .int bw _, ⟨.modArithType modArithType, _⟩ => modArithType.modulus.type.bitwidth = bw
   | _, _ => False
 
 instance : Decidable (Conforms val ty) := by
@@ -522,6 +523,70 @@ def Arith.interpretOp' (opType : Veir.Arith) (properties : HasDialectOpInfo.prop
     let rhs := rhs.cast (by simpa using h)
     return (#[.int bw (LLVM.Int.select cond lhs rhs)], none)
   | _ => none
+
+
+def ModArith.interpretOp' (opType : Veir.Mod_Arith) (properties : HasDialectOpInfo.propertiesOf opType)
+    (resultTypes : Array TypeAttr) (operands : Array RuntimeValue) (_blockOperands : Array BlockPtr)
+    : Interp ((Array RuntimeValue) × Option ControlFlowAction) :=
+  match opType with
+  | .constant => do
+    /- Constants are converted straight to LLVM integers without an explicit reduction,
+     relying on op verifiers to ensure the value is within bounds. -/
+    let some resType := resultTypes[0]? | none
+    let .modArithType modArithType := resType.val | none
+    let bw := modArithType.modulus.type.bitwidth
+    return (#[.int bw (.val (BitVec.ofInt bw properties.value.value))], none)
+  | .add => do
+    let some resType := resultTypes[0]? | none
+    let .modArithType modArithType := resType.val | none
+    let modulus := modArithType.modulus.value
+    let bw := modArithType.modulus.type.bitwidth
+    let [.int bw' lhs, .int bw'' rhs] := operands.toList | none
+    if h: bw ≠ bw' ∨ bw' ≠ bw'' then none else
+    let rhs := rhs.cast (by simp at h; exact h.right.symm)
+    let wideBw := bw' + 1
+    let intModulus := .val (BitVec.ofInt wideBw modulus)
+    let lhs := LLVM.Int.zext lhs wideBw false (by omega)
+    let rhs := LLVM.Int.zext rhs wideBw false (by omega)
+    let add := LLVM.Int.add lhs rhs false true
+    let rem := LLVM.Int.urem add intModulus
+    let res := LLVM.Int.trunc rem bw' false true (by omega)
+    return (#[.int bw' res], none)
+  | .sub => do
+    let some resType := resultTypes[0]? | none
+    let .modArithType modArithType := resType.val | none
+    let modulus := modArithType.modulus.value
+    let bw := modArithType.modulus.type.bitwidth
+    let [.int bw' lhs, .int bw'' rhs] := operands.toList | none
+    if h: bw ≠ bw' ∨ bw' ≠ bw'' then none else
+    let rhs := rhs.cast (by simp at h; exact h.right.symm)
+    let wideBw := bw' + 1
+    let intModulus := .val (BitVec.ofInt wideBw modulus)
+    let lhs := LLVM.Int.zext lhs wideBw false (by omega)
+    let rhs := LLVM.Int.zext rhs wideBw false (by omega)
+    /- we compute a - b (mod q) as ((a + q) - b) % q to avoid underflow -/
+    let add := LLVM.Int.add lhs intModulus false true
+    let sub := LLVM.Int.sub add rhs false true
+    let rem := LLVM.Int.urem sub intModulus
+    let res := LLVM.Int.trunc rem bw' false true (by omega)
+    return (#[.int bw' res], none)
+  | .mul => do
+    let some resType := resultTypes[0]? | none
+    let .modArithType modArithType := resType.val | none
+    let modulus := modArithType.modulus.value
+    let bw := modArithType.modulus.type.bitwidth
+    let [.int bw' lhs, .int bw'' rhs] := operands.toList | none
+    if h: bw ≠ bw' ∨ bw' ≠ bw'' then none else
+    let rhs := rhs.cast (by simp at h; exact h.right.symm)
+    let wideBw := bw' + bw' + 1
+    let intModulus := .val (BitVec.ofInt wideBw modulus)
+    let lhs := LLVM.Int.zext lhs wideBw false (by omega)
+    let rhs := LLVM.Int.zext rhs wideBw false (by omega)
+    let mul := LLVM.Int.mul lhs rhs false true
+    let rem := LLVM.Int.urem mul intModulus
+    let res := LLVM.Int.trunc rem bw' false true (by omega)
+    return (#[.int bw' res], none)
+
 
 def Llvm.interpretOp' (opType : Veir.Llvm) (properties : HasDialectOpInfo.propertiesOf opType)
     (resultTypes : Array TypeAttr) (operands : Array RuntimeValue) (blockOperands : Array BlockPtr)
@@ -1256,6 +1321,9 @@ def interpretOp' (opType : OpCode) (properties : HasOpInfo.propertiesOf opType)
   match opType with
   | .arith arithOp => do
     let (vals, act) ← Arith.interpretOp' arithOp properties resultTypes operands blockOperands
+    return (vals, mem, act)
+  | .mod_arith modArithOp => do
+    let (vals, act) ← ModArith.interpretOp' modArithOp properties resultTypes operands blockOperands
     return (vals, mem, act)
   | .llvm llvmOp => do
     Llvm.interpretOp' llvmOp properties resultTypes operands blockOperands mem
