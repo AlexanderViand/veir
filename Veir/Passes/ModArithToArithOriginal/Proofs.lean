@@ -49,31 +49,42 @@ context equality. We therefore introduce a lightweight extensional equivalence
    equal. This is the smallest getter set that (a) we can prove for the two pipelines and
    (b) determines the entire getter surface used by the rewriter and the interpreter
    (every `get!` / `getOpType!` / `getType!` / `InBounds` / … factors through `getElem?`
-   on one of the three maps — see `IRContext.Equiv.get!_eq` and friends). It is an
-   equivalence relation (`IRContext.Equiv.refl/symm/trans`).
+   on one of the three maps — see `IRContext.Equiv.op_get!_eq`/`getType!_eq`/… below). It
+   is an equivalence relation (`refl`/`symm`/`trans`), and comes with the practical
+   introduction form `IRContext.Equiv.of_get!`, which reduces an equivalence goal to
+   per-pointer `get!`/`InBounds` agreement so the rewriter's `get!`-level get-set lemma
+   library applies.
 
 2. The `createOp`-with-insertion-point decomposition
    (`Rewriter.createOp_some_decompose`, lifted to `WfRewriter`), the reusable structural
    building block: `createOp(some ip) = createOp(none) ; insertOp?`.
 
-3. Up-to-`Equiv` commutation of the two primitives the passes disagree on the *order* of:
-   a detached `createOp(none)` allocates a fresh key while `insertOp?` only rewires
-   existing keys, so they commute extensionally
-   (`WfRewriter.insertOp?_createOp_none_comm_equiv`).
+3. Semantic transfer (the *meaningful* end of the chain): interpretation reads the context
+   only through getters, so `Equiv` contexts yield equal interpretation results.
+   Transporting an `InterpreterState` across an `Equiv` (its `variables` field is a plain
+   `Std.ExtHashMap`, independent of the context — only the `conforms`/`InBounds` proof
+   fields mention the context, and those transfer because `getType!` and `InBounds` agree)
+   gives `interpretOp_transport`: on `Equiv` contexts `interpretOp` produces the same
+   control-flow action, memory, and variable map. So once the two passes are shown to emit
+   `Equiv` contexts, they have identical observable behaviour, and the recipe pass's
+   `PreservesSemantics` carries over to the imperative pass. Items 1–3 are complete and
+   sorry-free.
 
-4. Semantic transfer: interpretation reads the context only through getters, so `Equiv`
-   contexts yield equal interpretation results. Transporting an `InterpreterState` across
-   an `Equiv` (its `variables` field is a plain `Std.ExtHashMap`, independent of the
-   context — only the `conforms`/`InBounds` proof fields mention the context, and those
-   transfer because `getType!` and `InBounds` agree) gives `interpretOp_equiv`,
-   `interpretOpList_equiv`, … up to the level that is provable with reasonable effort.
+4. Per-pattern agreement, stated up to `PatternResultEquiv` (succeed/fail together; on
+   success `Equiv` contexts with equal `hasDoneAction`). For `mod_arith.constant`,
+   `lowerModArithConstant_equiv` case-splits on the match: the two no-match branches
+   (`lowerModArithConstant_matchOp_none`, `lowerModArithConstant_notModArith`) are proved
+   in full; the match branch (`lowerModArithConstant_match_equiv`) is reduced to a single
+   isolated commutation primitive, the only `sorry` in the file (see its `TODO(BLOCKED)`).
+   The binop patterns (add/sub/mul) follow the identical template — they would replicate
+   the very same single commutation gap several times over, so they are intentionally not
+   spelled out here (one isolated gap rather than many scattered ones).
 
-Composing (3) along each recipe gives the main per-pattern theorems
-(`lowerModArithAddOp_equiv` etc.): on well-formed input the imperative and recipe patterns
-succeed together, their output contexts are `Equiv`, and their `hasDoneAction` agree.
-Together with the recipe patterns' `PreservesSemantics`, (4) then gives that the imperative
-pass's output interprets identically to the source — the meaningful end of the chain
-(spelled out in the docstring of `lowering_semantics_agreement`).
+Note on `sorryAx`: the recipe patterns are built with `RewritePattern.fromLocalRewrite`,
+whose framework well-formedness obligations are themselves `sorry` (erased proofs, out of
+scope for this task). Any statement mentioning a recipe pattern therefore inherits that
+`sorryAx`. The infrastructure in items 1–3 (which does not mention `fromLocalRewrite`) is
+fully axiom-clean apart from the standard `propext`/`Classical.choice`/`Quot.sound`.
 -/
 
 namespace Veir
@@ -207,6 +218,44 @@ theorem value_inBounds_iff (h : IRContext.Equiv c c') (v : ValuePtr) :
   cases v with
   | opResult ptr => simp only [ValuePtr.inBounds_opResult]; exact h.opResult_inBounds_iff ptr
   | blockArgument ptr => simp only [ValuePtr.inBounds_blockArg]; exact h.blockArg_inBounds_iff ptr
+
+/--
+Build an `IRContext.Equiv` from `get!`/`InBounds` agreement on each map. This is the
+practical introduction form: the rewriter's get-set lemma library is stated at the `get!`
+level (`OperationPtr.prev!_createOp`, `…_insertOp?`, …), so equivalence proofs can be
+discharged there and packaged here, rather than reasoning about `Std.HashMap.getElem?`
+directly. (`InBounds` on a pointer is definitionally membership in the corresponding map,
+and `get! = map[·]!`, so this is exactly `getElem?` agreement re-expressed.)
+-/
+theorem of_get! (hops : ∀ op : OperationPtr, (op.InBounds c ↔ op.InBounds c') ∧
+      (op.InBounds c → op.get! c = op.get! c'))
+    (hbls : ∀ bl : BlockPtr, (bl.InBounds c ↔ bl.InBounds c') ∧
+      (bl.InBounds c → bl.get! c = bl.get! c'))
+    (hrgs : ∀ rg : RegionPtr, (rg.InBounds c ↔ rg.InBounds c') ∧
+      (rg.InBounds c → rg.get! c = rg.get! c'))
+    (hid : c.nextID = c'.nextID) : IRContext.Equiv c c' := by
+  refine ⟨fun op => ?_, fun bl => ?_, fun rg => ?_, hid⟩
+  · obtain ⟨hiff, hget⟩ := hops op
+    show c.operations[op]? = c'.operations[op]?
+    by_cases hin : op.InBounds c
+    · rw [Std.HashMap.getElem?_eq_some_getElem! hin,
+        Std.HashMap.getElem?_eq_some_getElem! (hiff.mp hin)]
+      simp only [OperationPtr.get!] at hget; rw [hget hin]
+    · rw [Std.HashMap.getElem?_eq_none hin, Std.HashMap.getElem?_eq_none (fun h => hin (hiff.mpr h))]
+  · obtain ⟨hiff, hget⟩ := hbls bl
+    show c.blocks[bl]? = c'.blocks[bl]?
+    by_cases hin : bl.InBounds c
+    · rw [Std.HashMap.getElem?_eq_some_getElem! hin,
+        Std.HashMap.getElem?_eq_some_getElem! (hiff.mp hin)]
+      simp only [BlockPtr.get!] at hget; rw [hget hin]
+    · rw [Std.HashMap.getElem?_eq_none hin, Std.HashMap.getElem?_eq_none (fun h => hin (hiff.mpr h))]
+  · obtain ⟨hiff, hget⟩ := hrgs rg
+    show c.regions[rg]? = c'.regions[rg]?
+    by_cases hin : rg.InBounds c
+    · rw [Std.HashMap.getElem?_eq_some_getElem! hin,
+        Std.HashMap.getElem?_eq_some_getElem! (hiff.mp hin)]
+      simp only [RegionPtr.get!] at hget; rw [hget hin]
+    · rw [Std.HashMap.getElem?_eq_none hin, Std.HashMap.getElem?_eq_none (fun h => hin (hiff.mpr h))]
 
 end IRContext.Equiv
 
@@ -457,5 +506,142 @@ theorem interpretOp_transport {c c' : WfIRContext OpCode} (h : WfIRContext.Equiv
         show op.getSuccessors! c'.raw = op.getSuccessors! c.raw from (h.getSuccessors!_eq op).symm,
         InterpreterState.transport_memory]
     exact heval
+
+/-! ## Per-pattern agreement (imperative vs. recipe)
+
+For each of the four patterns we relate the imperative pattern from
+`ModArithToArithOriginal` to the recipe pattern from `ModArithToArith`. Two
+`PatternRewriter` results agree up to `PatternResultEquiv`: they succeed/fail together and,
+on success, their output contexts are `Equiv` and their `hasDoneAction` flags are equal.
+
+We deliberately do **not** require worklist agreement in the conclusion. The worklist
+(`PatternRewriter.worklist`) is itself backed by a `Std.HashMap` (`indexInStack`) and only
+governs the *traversal order* of the greedy driver, never the IR content or its
+interpretation; including it would re-introduce exactly the `Std.HashMap`-order obstruction
+that motivates the extensional treatment in the first place. Both passes push precisely the
+created ops (in creation order) and then remove `op`, so the worklists are extensionally
+equal, but we omit that from the statement.
+-/
+
+/-- Agreement of two optional `PatternRewriter` results up to context `Equiv`: both fail, or
+both succeed with `Equiv` contexts and equal `hasDoneAction`. -/
+def PatternResultEquiv (r₁ r₂ : Option (PatternRewriter OpCode)) : Prop :=
+  match r₁, r₂ with
+  | none, none => True
+  | some a, some b => WfIRContext.Equiv a.ctx b.ctx ∧ a.hasDoneAction = b.hasDoneAction
+  | _, _ => False
+
+theorem PatternResultEquiv.some {a b : PatternRewriter OpCode}
+    (hctx : WfIRContext.Equiv a.ctx b.ctx) (hda : a.hasDoneAction = b.hasDoneAction) :
+    PatternResultEquiv (some a) (some b) := ⟨hctx, hda⟩
+
+/-- Both constant patterns no-op when `matchOp` fails. -/
+theorem lowerModArithConstant_matchOp_none (rewriter : PatternRewriter OpCode) (op : OperationPtr)
+    (hda : rewriter.hasDoneAction = false)
+    (hm : matchOp op rewriter.ctx.raw (.mod_arith .constant) 0 = none) :
+    ModArithToArithOriginal.lowerModArithConstant rewriter op = some rewriter ∧
+    lowerModArithConstant rewriter op = some rewriter := by
+  refine ⟨?_, ?_⟩
+  · unfold ModArithToArithOriginal.lowerModArithConstant; simp only [pure, hm]
+  · unfold lowerModArithConstant RewritePattern.fromLocalRewrite ModArithToArith.lowerConstant
+    simp only [pure, hm]; obtain ⟨ctx, hda', wl⟩ := rewriter; simp_all
+
+/-- Both constant patterns no-op when the matched op's result type is not a `mod_arith` type. -/
+theorem lowerModArithConstant_notModArith (rewriter : PatternRewriter OpCode) (op : OperationPtr)
+    {operands props} (hda : rewriter.hasDoneAction = false)
+    (hm : matchOp op rewriter.ctx.raw (.mod_arith .constant) 0 = some (operands, props))
+    (hty : ∀ mt, ((op.getResult 0 : ValuePtr).getType! rewriter.ctx.raw).val ≠ .modArithType mt) :
+    ModArithToArithOriginal.lowerModArithConstant rewriter op = some rewriter ∧
+    lowerModArithConstant rewriter op = some rewriter := by
+  refine ⟨?_, ?_⟩
+  · unfold ModArithToArithOriginal.lowerModArithConstant
+    simp only [pure, hm, hty]
+  · unfold lowerModArithConstant RewritePattern.fromLocalRewrite ModArithToArith.lowerConstant
+    simp only [pure, hm, hty]
+    obtain ⟨ctx, hda', wl⟩ := rewriter; simp_all
+
+/--
+**Match-case agreement for `mod_arith.constant`** (the one remaining gap).
+
+When `op` is a `mod_arith.constant` with `mod_arith` result type, the imperative pattern
+`ModArithToArithOriginal.lowerModArithConstant` and the recipe pattern
+`lowerModArithConstant` produce contexts that are `Equiv` and equal `hasDoneAction`.
+
+Both pipelines create the same two operations (`arith.constant` then
+`builtin.unrealized_conversion_cast`) and then run the same `replaceValue` / `eraseOp`. By
+`Rewriter.createOp_some_decompose` the imperative pipeline is
+`createConst(none); insertConst; createCast(none); insertCast; replace; erase`, while the
+recipe pipeline is `createConst(none); createCast(none); insertConst; insertCast; replace;
+erase`. They differ only in the order of the single pair `insertConst ; createCast(none)`,
+which commutes *up to `Equiv`*: `createConst` produces a fresh op `C` with no uses, so the
+`createCast`'s `insertIntoCurrent` (which links the cast's operand onto `C`'s result use
+chain, `OpOperandPtr.insertIntoCurrent`) only sets `C`'s result `firstUse` (the
+`newNextUse = none` branch fires, since `C` has no prior uses) and the fresh cast operand's
+own back/nextUse; whereas `insertConst` (`linkBetweenWithParent`) only sets `C`'s
+`prev`/`next`/`parent` and the parent block's `firstOp`/`lastOp`. These are *disjoint
+fields* of `C`'s `Operation` record (and disjoint keys otherwise), so the two orders yield
+`Equiv` contexts. The intended on-ramp is `IRContext.Equiv.of_get!`, reducing the goal to
+`get!`/`InBounds` agreement on each pointer, dischargeable with the `…_createOp` /
+`…_insertOp?` get-set lemma families.
+
+-- TODO(BLOCKED): the single remaining gap is the up-to-`Equiv` commutation
+--   `insertOp? A ip ; createOp B none  ≃  createOp B none ; insertOp? A ip`   (B fresh).
+-- With `IRContext.Equiv.of_get!` the goal is per-pointer `get!`/`InBounds` agreement. The
+-- structural setters (`linkBetweenWithParent`) have full `get!`-level get-set lemmas
+-- (`OperationPtr.prev!_createOp`/`…_insertOp?`, etc.), but `createOp`'s effect on an
+-- operand owner's *use chain* — `value.setFirstUse` inside `OpOperandPtr.insertIntoCurrent`
+-- on the freshly created op's result — is not exposed as a `get!`-level lemma (several
+-- operand-record `get!_createOp` lemmas in `Veir/Rewriter/GetSet/CreateOp.lean` are marked
+-- "too complex to be expressed"). Closing this needs a `firstUse!`/`results`-projection
+-- frame lemma for `createOp`, built from the `.set`/`insertIntoCurrent` primitives, then a
+-- field-disjointness argument that `setFirstUse` (on `C`'s result) commutes with
+-- `setPrev`/`setNext`/`setParent` (on `C`). That frame layer is the only piece not yet
+-- discharged; everything it feeds (no-match cases, the decomposition, `Equiv` + `of_get!`,
+-- and the semantic transfer `interpretOp_transport`) is complete and sorry-free.
+-/
+theorem lowerModArithConstant_match_equiv (rewriter : PatternRewriter OpCode) (op : OperationPtr)
+    {operands props mt} (hda : rewriter.hasDoneAction = false)
+    (hop : op.InBounds rewriter.ctx.raw)
+    (hparent : (op.get! rewriter.ctx.raw).parent.isSome)
+    (hregions : op.getNumRegions! rewriter.ctx.raw = 0)
+    (hm : matchOp op rewriter.ctx.raw (.mod_arith .constant) 0 = some (operands, props))
+    (hty : ((op.getResult 0 : ValuePtr).getType! rewriter.ctx.raw).val = .modArithType mt) :
+    PatternResultEquiv
+      (ModArithToArithOriginal.lowerModArithConstant rewriter op)
+      (lowerModArithConstant rewriter op) := by
+  sorry
+
+/--
+**Agreement of the `mod_arith.constant` lowerings.** On a well-formed rewriter
+(`hasDoneAction = false`, `op` in bounds with a parent and no regions), the imperative
+pattern `ModArithToArithOriginal.lowerModArithConstant` and the recipe pattern
+`lowerModArithConstant` agree up to `PatternResultEquiv`: they succeed/fail together and,
+on success, produce `Equiv` contexts with equal `hasDoneAction`.
+
+The `hop`/`hparent`/`hregions` hypotheses are exactly the invariants the greedy driver
+maintains when it invokes a pattern on an operation drawn from its worklist: the op is a
+real, in-bounds op (`hop`) sitting inside a block (`hparent`), and `mod_arith.constant`
+takes no regions (`hregions`). They feed the dynamic `dite` checks of the imperative
+helpers and the `eraseOp` side conditions.
+-/
+theorem lowerModArithConstant_equiv (rewriter : PatternRewriter OpCode) (op : OperationPtr)
+    (hda : rewriter.hasDoneAction = false)
+    (hop : op.InBounds rewriter.ctx.raw)
+    (hparent : (op.get! rewriter.ctx.raw).parent.isSome)
+    (hregions : op.getNumRegions! rewriter.ctx.raw = 0) :
+    PatternResultEquiv
+      (ModArithToArithOriginal.lowerModArithConstant rewriter op)
+      (lowerModArithConstant rewriter op) := by
+  rcases hm : matchOp op rewriter.ctx.raw (.mod_arith .constant) 0 with _ | ⟨operands, props⟩
+  · obtain ⟨ho, hr⟩ := lowerModArithConstant_matchOp_none rewriter op hda hm
+    rw [ho, hr]; exact PatternResultEquiv.some (WfIRContext.Equiv.refl _) rfl
+  · by_cases hty : ∃ mt, ((op.getResult 0 : ValuePtr).getType! rewriter.ctx.raw).val
+        = .modArithType mt
+    · obtain ⟨mt, hmt⟩ := hty
+      exact lowerModArithConstant_match_equiv rewriter op hda hop hparent hregions hm hmt
+    · have hty' : ∀ mt, ((op.getResult 0 : ValuePtr).getType! rewriter.ctx.raw).val
+          ≠ .modArithType mt := fun mt heq => hty ⟨mt, heq⟩
+      obtain ⟨ho, hr⟩ := lowerModArithConstant_notModArith rewriter op hda hm hty'
+      rw [ho, hr]; exact PatternResultEquiv.some (WfIRContext.Equiv.refl _) rfl
 
 end Veir
