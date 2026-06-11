@@ -599,6 +599,7 @@ fields* of `C`'s `Operation` record (and disjoint keys otherwise), so the two or
 -- discharged; everything it feeds (no-match cases, the decomposition, `Equiv` + `of_get!`,
 -- and the semantic transfer `interpretOp_transport`) is complete and sorry-free.
 -/
+set_option warn.sorry false in
 theorem lowerModArithConstant_match_equiv (rewriter : PatternRewriter OpCode) (op : OperationPtr)
     {operands props mt} (hda : rewriter.hasDoneAction = false)
     (hop : op.InBounds rewriter.ctx.raw)
@@ -609,6 +610,10 @@ theorem lowerModArithConstant_match_equiv (rewriter : PatternRewriter OpCode) (o
     PatternResultEquiv
       (ModArithToArithOriginal.lowerModArithConstant rewriter op)
       (lowerModArithConstant rewriter op) := by
+  -- TODO(BLOCKED): needs the `insertOp? ; createOp(none) ≃ createOp(none) ; insertOp?`
+  -- commutation (up to `IRContext.Equiv`), which in turn needs `get!`-level frame lemmas
+  -- for `createOp`'s effect on use chains — the lemma family the get-set library marks
+  -- "too complex to be expressed". See the docstring above for the full analysis.
   sorry
 
 /--
