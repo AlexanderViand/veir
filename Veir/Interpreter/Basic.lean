@@ -1369,6 +1369,15 @@ def interpretOp' (opType : OpCode) (properties : HasOpInfo.propertiesOf opType)
     | .integerType _bw, [.reg val] =>
       let .integerType resBw := resType.val | none
       return (#[.int resBw.bitwidth (RISCV.Reg.toInt val resBw.bitwidth)], mem, none)
+    | .integerType resBw, [.int bw val] =>
+      -- e.g. unpacking a `!mod_arith.int<q : iN>` value into its `iN` storage type
+      if h : bw ≠ resBw.bitwidth then none else
+      return (#[.int resBw.bitwidth (val.cast (by omega))], mem, none)
+    | .modArithType modArithType, [.int bw val] =>
+      -- packing an `iN` value into `!mod_arith.int<q : iN>`; canonicity of the value is
+      -- enforced when the result is bound in the variable state
+      if h : bw ≠ modArithType.modulus.type.bitwidth then none else
+      return (#[.int modArithType.modulus.type.bitwidth (val.cast (by omega))], mem, none)
     | _ , _ => none
   | _ => none
 
