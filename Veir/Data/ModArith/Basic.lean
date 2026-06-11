@@ -67,6 +67,20 @@ are themselves canonical representatives in `[0, q)`.
 def mul {w : Nat} (q : Int) (x y : BitVec w) : BitVec w :=
   BitVec.ofNat w ((((x.toNat : Int) * (y.toNat : Int)) % q).toNat)
 
+/--
+`mac q x y z` is the canonical representative of `x * y + z` modulo `q`, where `x`, `y`,
+and `z` are themselves canonical representatives in `[0, q)`.
+-/
+def mac {w : Nat} (q : Int) (x y z : BitVec w) : BitVec w :=
+  BitVec.ofNat w ((((x.toNat : Int) * (y.toNat : Int) + (z.toNat : Int)) % q).toNat)
+
+/--
+`reduce q x` is the canonical representative of `x` modulo `q`. On a value that is
+already a canonical representative in `[0, q)` it is the identity.
+-/
+def reduce {w : Nat} (q : Int) (x : BitVec w) : BitVec w :=
+  BitVec.ofNat w (((x.toNat : Int) % q).toNat)
+
 end
 
 end Veir.Data.ModArith
