@@ -4,6 +4,7 @@ public import Std.Data.HashMap
 public import Init.Data.Queue
 public import Veir.IR.Basic
 public import Veir.GlobalOpInfo
+public import Veir.Analysis.DataFlow.Domains.LivenessDomain
 public import Veir.Rewriter.InsertPoint
 
 open Std (HashMap Queue)
@@ -55,6 +56,7 @@ Tags to match on for different `DataFlowAnalysis` types.
 -/
 inductive AnalysisKind where
   | dominance
+  | deadCode
 deriving BEq, Hashable, Repr, DecidableEq
 
 /--
@@ -63,6 +65,7 @@ Tags to match on for different fact types.
 inductive FactKind where
   | dominator
   | regionMetadata
+  | liveness
 deriving BEq, ReflBEq, LawfulBEq, Hashable, Repr, DecidableEq
 
 abbrev WorkItem := InsertPoint × AnalysisKind
@@ -89,11 +92,18 @@ structure SparsePayload (Domain : Type) where
   latticeElement : Domain
 
 /--
+Tracks whether a control flow point or edge is live.
+-/
+structure LivenessPayload where
+  latticeElement : Liveness := .dead
+
+/--
 The fact specific data stored for each fact kind.
 -/
 @[expose] def FactPayload : FactKind → Type
   | .dominator => DominatorPayload
   | .regionMetadata => RegionMetadataPayload
+  | .liveness => LivenessPayload
 
 /--
 A dataflow fact stored by the framework.
@@ -155,10 +165,26 @@ def setPostOrderIndex (fact : Fact .regionMetadata)
     (postOrderIndex : HashMap BlockPtr Nat) : Fact .regionMetadata :=
   { fact with payload := { fact.payload with postOrderIndex := postOrderIndex } }
 
+def live (fact : Fact .liveness) : Bool :=
+  match fact.payload.latticeElement with
+  | .dead => false
+  | .live => true
+
+def latticeElement (fact : Fact .liveness) : Liveness :=
+  fact.payload.latticeElement
+
+def setLatticeElement (fact : Fact .liveness) (latticeElement : Liveness) : Fact .liveness :=
+  { fact with payload := { fact.payload with latticeElement := latticeElement } }
+
+def setToLive (fact : Fact .liveness) : Fact .liveness :=
+  fact.setLatticeElement .live
+
 end Fact
 
 abbrev DominatorFact := Fact .dominator
 
 abbrev RegionMetadataFact := Fact .regionMetadata
+
+abbrev LivenessFact := Fact .liveness
 
 end Veir
