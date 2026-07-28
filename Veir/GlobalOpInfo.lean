@@ -1,5 +1,6 @@
 module
 
+import Veir.Meta.OpCode
 public import Veir.Dialects.Arith.OpInfo
 public import Veir.Dialects.Builtin.OpInfo
 public import Veir.Dialects.Func.OpInfo
@@ -179,6 +180,8 @@ instance : HasOpInfo OpCode where
   hasSideEffects := OpCode.hasSideEffects
   isConstantLike := OpCode.isConstantLike
   hasSSADominance opCode index := opCode.getRegionKind index == .SSACFG
+
+#generate_has_dialect_instances OpCode
 
 abbrev propertiesOf := HasOpInfo.propertiesOf (self := instHasOpInfoOpCode)
 
